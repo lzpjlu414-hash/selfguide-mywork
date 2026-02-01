@@ -43,6 +43,9 @@ def parse_caring_swipl_answer(raw: str) -> Tuple[Optional[str], Optional[str]]:
         # 不是 JSON：就把 raw 当答案（proof 空）
         return raw.splitlines()[0].strip(), None
 
+    if isinstance(obj, list):
+        obj = obj[0] if obj else {}
+
     # 2) 从 JSON 里找答案字段
     KEY_CANDIDATES_ANS = ["answer", "pred", "result", "final_answer", "output", "answers"]
     ans = None
@@ -253,6 +256,10 @@ def postprocess_pred(dataset_key: str, pred: str) -> str:
     if dataset_key == "date":
         d = normalize_date_mmddyyyy(pred)
         return d if d else pred
+
+    if dataset_key == "gsm8k":
+        n = extract_gsm8k_final_number(pred)
+        return n if n else pred
 
     # free text: 取第一行更干净
     return pred.splitlines()[0].strip() if pred else pred
@@ -564,16 +571,23 @@ def self_guide_run(dataset: str, method: str, start_index: int = 0):
         pred_raw = ai_request(history, model=SOLVE_MODEL, t=0.2)
         pred = postprocess_pred(dataset_key, pred_raw)
 
+
         # ======== Round C': optional Prolog verification/execution (CaRing) ========
-        route = "LLM-only"
+        route = "llm_only"
         prolog_pack = {"enabled": False, "task_type": "No"}  # 默认不启用
+        llm_candidate = pred
+        llm_candidate_norm = postprocess_pred(dataset_key, llm_candidate)
+        final_answer = llm_candidate_norm
+        route_reason = None
 
         # 只对 CaRing 三任务启用 Prolog（你现在 mmlu/sqa/date/clutrr 就不要碰）
         if dataset_key in ("gsm8k", "prontoqa", "proofwriter"):
             task_type = parse_task_type_from_guideline(guideline)  # 期望返回 Yes/No/Partial
+
             # ===== TEMP: force Prolog on first sample only =====
-            if dataset_key == "gsm8k" and i == start_index:
-                task_type = "Yes"
+            forced_task_type = os.getenv("FORCE_TASK_TYPE", "").strip()
+            if forced_task_type:
+                task_type = forced_task_type.capitalize()
 
             prolog_pack["task_type"] = task_type
             prolog_pack["enabled"] = (task_type in ("Yes", "Partial"))  # ✅ 只有 Yes/Partial 才算启用
@@ -598,18 +612,66 @@ def self_guide_run(dataset: str, method: str, start_index: int = 0):
 
                     prolog_pack["swipl"] = swipl_out
 
-                    if swipl_out.get("ok"):
-                        route = "Prolog-ran"
+                    # 解析 Prolog answer + proof
+                    prolog_answer, prolog_proof = parse_caring_swipl_answer(swipl_out.get("raw"))
+                    prolog_pack["prolog_answer_raw"] = prolog_answer
+                    prolog_pack["prolog_answer_norm"] = (
+                        postprocess_pred(dataset_key, prolog_answer) if prolog_answer else None
+                    )
+                    prolog_pack["proof"] = prolog_proof
+
+                    if swipl_out.get("ok") and prolog_answer:
+                        prolog_answer_norm = prolog_pack["prolog_answer_norm"]
+                        if prolog_answer_norm == llm_candidate_norm:
+                            route = "executor"
+                            final_answer = prolog_answer_norm
+                            route_reason = "Prolog answer matches LLM after normalization."
+                            prolog_pack["route_reason"] = route_reason
+                        else:
+                            route = "verifier"
+                            final_answer = prolog_answer_norm
+                            route_reason = "Prolog answer differs from LLM after normalization."
+                            prolog_pack["route_reason"] = route_reason
+                            prolog_pack["audit"] = {
+                                "llm_candidate_raw": llm_candidate,
+                                "llm_candidate_norm": llm_candidate_norm,
+                                "prolog_answer_raw": prolog_answer,
+                                "prolog_answer_norm": prolog_answer_norm,
+                                "reason": "Prolog answer differs from LLM; trust Prolog for correction.",
+                            }
                     else:
-                        route = "Prolog-failed"
+                        route = "llm_only"
+                        final_answer = llm_candidate_norm
+
+                        error_hint = ""
+                        if swipl_out.get("error"):
+                            error_hint = str(swipl_out.get("error"))
+                        elif swipl_out.get("stderr"):
+                            error_hint = str(swipl_out.get("stderr"))
+                        error_hint = error_hint[:200]
+
+                        route_reason = "Prolog failed or no answer parsed."
+                        if error_hint:
+                            route_reason = f"{route_reason} {error_hint}"
+                        prolog_pack["fallback_reason"] = route_reason
+
                 except Exception as e:
                     prolog_pack["swipl"] = {"ok": False, "error": str(e), "raw": ""}
-                    route = "Prolog-parse-failed"
+                    route = "llm_only"
+                    final_answer = llm_candidate_norm
+                    route_reason = f"Prolog parse/execute exception: {e}"
+                    prolog_pack["fallback_reason"] = route_reason
+            else:
+                route_reason = "Prolog disabled by task_type."
+                prolog_pack["fallback_reason"] = route_reason
+        else:
+            route_reason = "Dataset not supported for Prolog."
+            prolog_pack["fallback_reason"] = route_reason
 
-        add_message("assistant", pred, history)
+        add_message("assistant", final_answer, history)
         time.sleep(SLEEP_SEC)
 
-        correctness = judge_correctness(dataset_key, gold, pred)
+        correctness = judge_correctness(dataset_key, gold, final_answer)
 
 
         # ---------- save log ----------
@@ -628,6 +690,9 @@ def self_guide_run(dataset: str, method: str, start_index: int = 0):
                     "draft": draft,
                     "pred_raw": pred_raw,
                     "pred": pred,
+                    "llm_candidate": llm_candidate,
+                    "llm_candidate_norm": llm_candidate_norm,
+                    "final_answer": final_answer,
                     "correctness": correctness,
                     # 记录关键 prompt（方便复现/写论文）
                     "round1_guideline_prompt": g_prompt,
@@ -635,6 +700,8 @@ def self_guide_run(dataset: str, method: str, start_index: int = 0):
                     "log": history,
                     "route": route,
                     "prolog": prolog_pack,
+
+                    "route_reason": route_reason,
 
                 },
                 lf,
