@@ -3,6 +3,8 @@ import os
 import re
 import subprocess #在 Python 里启动外部命令（这里是启动另一个 python 脚本，脚本内部再调用 SWI-Prolog）。
 import json
+import shutil
+import sys
 from interruptingcow import timeout
 
 curr_dir = os.path.dirname(os.path.abspath(__file__))
@@ -57,6 +59,7 @@ def consult_prolog(
         max_depth=5,
         debug=False,
         dataset_name="vanilla",
+        output_path=None,
 ):
     
     """
@@ -106,6 +109,11 @@ def consult_prolog(
             [clause.strip() + '\n' for clause in clauses] + [user_query + '\n']
         )
     tmp_output_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+    # Windows 上要先 close，否则后续写入/复制可能被占用
+    try:
+        tmp_output_file.close()
+    except Exception:
+        pass
 
 
 
@@ -176,8 +184,30 @@ def consult_prolog(
     output['answer'] = list(set(output['answer'])) if output['answer'] is not None else [""]
     output['proofs'] = list(set(output['proofs'])) if output['proofs'] is not None else [""]
 
+    if output_path:
+        final_output_path = os.path.abspath(output_path)
+        os.makedirs(os.path.dirname(final_output_path), exist_ok=True)
+        if (not os.path.exists(tmp_output_path)) or (os.path.getsize(tmp_output_path) == 0):
+            print(f"[call_swipl] ERROR: temp output not created or empty: {tmp_output_path}", file=sys.stderr)
+            if response:
+                print(f"[call_swipl] stdout:\n{getattr(response, 'stdout', '')}", file=sys.stderr)
+                print(f"[call_swipl] stderr:\n{getattr(response, 'stderr', '')}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            shutil.copyfile(tmp_output_path, final_output_path)
+        except Exception as e:
+            print(f"[call_swipl] ERROR: failed to copy temp output -> output_path: {e}", file=sys.stderr)
+            print(f"[call_swipl] temp:  {tmp_output_path}", file=sys.stderr)
+            print(f"[call_swipl] final: {final_output_path}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            os.remove(tmp_output_path)
+        except Exception:
+            pass
+
     os.remove(tmp_clause_file.name)
-    os.remove(tmp_output_file.name)
+    if os.path.exists(tmp_output_file.name):
+        os.remove(tmp_output_file.name)
     # del prolog
     # prolog.query("halt")
 
