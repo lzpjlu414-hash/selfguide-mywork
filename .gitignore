@@ -7,3 +7,7 @@ tmp_test_logs/
 tmp_prolog/
 __pycache__/
 *.pyc
+tmp_test_logs/
+tmp_prolog/
+__pycache__/
+*.pyc
