@@ -152,24 +152,51 @@ def main():
 
     # 调 individual_prologging
     p = _run_individual_prologging(tmp_assert.name, args.mi_path, tmp_out.name, args.max_result, args.debug)
+    # 把执行信息也写入 output，便于你在 self_guide log 里直接看到原因
+    exec_meta = {
+        "returncode": p.returncode,
+        "stderr_tail": (p.stderr or "")[-2000:],
+        "stdout_tail": (p.stdout or "")[-2000:],
+        "meta_interpreter": args.meta_interpreter,
+        "max_depth": args.max_depth,
+    }
+
 
     results = _read_jsonl(tmp_out.name)
 
     # 从 orig_query 里抓变量名：daily_profit(Profit) -> Profit
+    # 从 orig_query 抽变量名作为答案 key（更稳：不依赖一元谓词）
     output = {"answer": [""], "proofs": [""]}
-    target_key = re.findall(r"\((.*?)\)", (orig_query or "").strip().rstrip("."), re.DOTALL)
-    if len(target_key) == 1:
-        key = target_key[0].strip()
-        answers, proofs = [], []
-        for r in results:
-            if isinstance(r, dict) and key in r:
-                answers.append(r[key])
-            if isinstance(r, dict) and "Proof" in r:
-                proofs.append(r["Proof"])
-        if answers:
-            output["answer"] = list({str(a) for a in answers})
-        if proofs:
-            output["proofs"] = list({str(pr) for pr in proofs})
+
+    q0 = (orig_query or "").strip().rstrip(".")
+    vars_in_q = [v for v in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", q0) if v != "Proof"]
+    key = vars_in_q[0] if vars_in_q else None  # 默认取第一个变量作为“答案变量”
+
+    answers, proofs = [], []
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+
+        # 取答案
+        if key and key in r:
+            answers.append(r[key])
+        elif not key:
+            # query 没变量时，尝试常见命名兜底（可按你的数据集再加）
+            for k in ("Answer", "Ans", "Result", "X"):
+                if k in r:
+                    answers.append(r[k])
+                    break
+
+        # 取 proof
+        if "Proof" in r:
+            proofs.append(r["Proof"])
+
+    if answers:
+        # 保序去重
+        output["answer"] = list(dict.fromkeys(str(a) for a in answers))
+    if proofs:
+        output["proofs"] = list(dict.fromkeys(str(pr) for pr in proofs))
+    output["exec"] = exec_meta
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
     with open(args.output_path, "w", encoding="utf-8") as f:

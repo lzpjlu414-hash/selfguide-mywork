@@ -1,0 +1,82 @@
+{
+  "id": 0,
+  "dataset": "gsm8k",
+  "method": "cot_selfguide",
+  "models": {
+    "guide_model": "deepseek-chat",
+    "solve_model": "deepseek-chat"
+  },
+  "format_rule": "Output ONLY the final answer. Do NOT add explanation.",
+  "run_config": {
+    "dataset": "gsm8k",
+    "method": "cot_selfguide",
+    "start_index": 0,
+    "num_samples": 1,
+    "force_task_type": "Yes",
+    "solve_model": "deepseek-chat",
+    "guide_model": "deepseek-chat",
+    "prolog_max_result": 20,
+    "prolog_enabled": true,
+    "prolog_task_type": "Yes"
+  },
+  "guideline": "```yaml\ntask_type: No\nschema: |\n  No Prolog needed. This is a direct arithmetic calculation.\n  Constants: eggs_per_day = 16, breakfast_eggs = 3, muffin_eggs = 4, price_per_egg = 2.\n  No predicates or logical rules required.\nquery_goal: |\n  Not applicable. The query is a direct computation: ((eggs_per_day - breakfast_eggs - muffin_eggs) * price_per_egg).\nfallback: |\n  If a calculation error occurs, output \"Error\" and stop.\n```",
+  "gold": "Janet sells 16 - 3 - 4 = <<16-3-4=9>>9 duck eggs a day.\nShe makes 9 * 2 = $<<9*2=18>>18 every day at the farmer’s market.\n#### 18",
+  "draft_raw": "18",
+  "draft": "18",
+  "pred_raw": "20",
+  "pred": "20",
+  "llm_candidate": "20",
+  "llm_candidate_norm": "20",
+  "final_answer": "18",
+  "correctness": "True",
+  "round1_guideline_prompt": "You are a GuidelineGenerator.\nYou MUST NOT solve the question.\n\nOutput YAML with EXACT keys:\ntask_type: Yes/No/Partial  # whether to use Prolog\nschema: |                 # naming, predicates, negation/unknown conventions\nquery_goal: |             # what the Prolog query should prove/return\nfallback: |               # what to do on parse error/timeout/multiple answers\n\nRules:\n1) DO NOT output any final answer.\n2) schema MUST mention: constants naming, predicate set, negation/Unknown convention.\n3) query_goal MUST be specific (what to prove/return).\n4) solver output constraint: Output ONLY the final answer. Do NOT add explanation.\n\nJanet’s ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?\n\nYAML:",
+  "round2_solve_prompt": "Guideline/checklist:\n```yaml\ntask_type: No\nschema: |\n  No Prolog needed. This is a direct arithmetic calculation.\n  Constants: eggs_per_day = 16, breakfast_eggs = 3, muffin_eggs = 4, price_per_egg = 2.\n  No predicates or logical rules required.\nquery_goal: |\n  Not applicable. The query is a direct computation: ((eggs_per_day - breakfast_eggs - muffin_eggs) * price_per_egg).\nfallback: |\n  If a calculation error occurs, output \"Error\" and stop.\n```\n\nDraft answer (may be wrong):\n18\n\nJanet’s ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?\n\nThink step by step internally, then give the final answer.\nThe draft may be entirely wrong; do NOT copy it.\nSolve the problem independently first, then use the guideline to check and revise.\nIMPORTANT: Do NOT output explanation.\nAfter solving, compare your solution with the Draft and identify any mistakes in the Draft internally.\nThen revise your final answer if needed.\nOutput ONLY the final answer. Do NOT add explanation.\nFinal answer:",
+  "log": [
+    {
+      "role": "user",
+      "content": "Guideline/checklist:\n```yaml\ntask_type: No\nschema: |\n  No Prolog needed. This is a direct arithmetic calculation.\n  Constants: eggs_per_day = 16, breakfast_eggs = 3, muffin_eggs = 4, price_per_egg = 2.\n  No predicates or logical rules required.\nquery_goal: |\n  Not applicable. The query is a direct computation: ((eggs_per_day - breakfast_eggs - muffin_eggs) * price_per_egg).\nfallback: |\n  If a calculation error occurs, output \"Error\" and stop.\n```\n\nDraft answer (may be wrong):\n18\n\nJanet’s ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?\n\nThink step by step internally, then give the final answer.\nThe draft may be entirely wrong; do NOT copy it.\nSolve the problem independently first, then use the guideline to check and revise.\nIMPORTANT: Do NOT output explanation.\nAfter solving, compare your solution with the Draft and identify any mistakes in the Draft internally.\nThen revise your final answer if needed.\nOutput ONLY the final answer. Do NOT add explanation.\nFinal answer:"
+    },
+    {
+      "role": "assistant",
+      "content": "18"
+    }
+  ],
+  "route": "verifier",
+  "prolog": {
+    "enabled": true,
+    "task_type": "Yes",
+    "prolog_max_result": 20,
+    "prolog_raw": "eggs_per_day(16).\nbreakfast_eggs(3).\nmuffin_eggs(4).\nprice_per_egg(2).\ndaily_profit(D) :- eggs_per_day(E), breakfast_eggs(B), muffin_eggs(M), price_per_egg(P), D is (E - B - M) * P.\ndaily_profit(D).",
+    "clauses": [
+      "eggs_per_day(16).",
+      "breakfast_eggs(3).",
+      "muffin_eggs(4).",
+      "price_per_egg(2).",
+      "daily_profit(D) :- eggs_per_day(E), breakfast_eggs(B), muffin_eggs(M), price_per_egg(P), D is (E - B - M) * P.",
+      "daily_profit(D)."
+    ],
+    "swipl": {
+      "ok": true,
+      "error": null,
+      "raw": "{\"answer\": [\"18\"], \"proofs\": [\"\"], \"exec\": {\"returncode\": 0, \"stderr_tail\": \"\", \"stdout_tail\": \"\", \"meta_interpreter\": \"raw\", \"max_depth\": 25}}",
+      "stdout": "",
+      "stderr": "",
+      "returncode": 0,
+      "cmd": "E:\\Anaconda_envs\\envs\\selfguide\\python.exe E:\\develop-python\\PythonProject1\\src\\caring\\tasks\\gsm8k\\call_swipl.py --assert_path E:\\develop-python\\PythonProject1\\tmp_prolog\\gsm8k_assert.pl --mi_path E:\\develop-python\\PythonProject1\\src\\caring\\tasks\\gsm8k\\meta_interpreter.pl --output_path E:\\develop-python\\PythonProject1\\tmp_prolog\\gsm8k_out.json --max_result 20",
+      "out_path": "E:\\develop-python\\PythonProject1\\tmp_prolog\\gsm8k_out.json"
+    },
+    "clauses_count": 6,
+    "prolog_answer_raw": "18",
+    "prolog_answer_norm": "18",
+    "proof": null,
+    "route_reason": "Prolog answer differs from LLM after normalization.",
+    "audit": {
+      "llm_candidate_raw": "20",
+      "llm_candidate_norm": "20",
+      "prolog_answer_raw": "18",
+      "prolog_answer_norm": "18",
+      "reason": "Prolog answer differs from LLM; trust Prolog for correction."
+    }
+  },
+  "route_reason": "Prolog answer differs from LLM after normalization."
+}

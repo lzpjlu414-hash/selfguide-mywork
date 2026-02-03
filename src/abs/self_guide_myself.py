@@ -3,7 +3,7 @@ import json
 import time
 import os
 import re
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple, List
 
 from openai import OpenAI
 
@@ -12,10 +12,6 @@ from argparse import ArgumentParser
 
 from pathlib import Path
 import subprocess
-import tempfile
-
-from pathlib import Path
-print("RUNNING:", Path(__file__).resolve())
 
 
 # 解析 Guideline 里的 task_type（Yes/No/Partial）
@@ -145,15 +141,10 @@ def extract_prolog_clauses(code: str) -> list:
     return clauses
 
 
-import subprocess, sys, os, tempfile
 
-from pathlib import Path
-import subprocess, sys, os, re
-
-from pathlib import Path
 import subprocess
 import sys
-import os
+
 
 def run_caring_call_swipl(dataset_key: str, clauses: list, max_result: int = 20) -> dict:
     caring_root = (Path(__file__).resolve().parent.parent / "caring").resolve()
@@ -231,10 +222,17 @@ def run_caring_call_swipl(dataset_key: str, clauses: list, max_result: int = 20)
 # ======================
 # OpenAI config
 # ======================
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY", ""),
-    base_url=os.getenv("OPENAI_API_BASE", None) or None,
-)
+_CLIENT = None
+
+
+def get_client() -> OpenAI:
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY", ""),
+            base_url=os.getenv("OPENAI_API_BASE", None) or None,
+        )
+    return _CLIENT
 
 
 SOLVE_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-1106")
@@ -245,6 +243,7 @@ N_GUIDE_CANDIDATES = int(os.getenv("N_GUIDE_CANDIDATES", "1"))
 
 # 可选：两轮之间 sleep，避免触发限流
 SLEEP_SEC = float(os.getenv("SLEEP_SEC", "0.5"))
+PROLOG_MAX_RESULT = 20
 
 def postprocess_pred(dataset_key: str, pred: str) -> str:
     pred = (pred or "").strip()
@@ -281,13 +280,36 @@ def build_cot_draft_prompt(qblock: str, format_rule: str) -> str:
 def add_message(role: str, content: str, history: list):
     history.append({"role": role, "content": content})
 
+def _mock_ai_answer(prompt: str) -> str:
+    # guideline YAML
+    if "Output YAML with EXACT keys" in prompt and "YAML:" in prompt:
+        return (
+            "task_type: Yes\n"
+            "schema: |\n"
+            "  - predicates: ans/1\n"
+            "  - constants: use integers only\n"
+            "  - negation/unknown: not used\n"
+            "query_goal: |\n"
+            "  - return the final numeric answer as Ans\n"
+            "fallback: |\n"
+            "  - if Prolog fails, use the LLM numeric result\n"
+        )
+    # prolog generation
+    if "Prolog code (last line is the query)" in prompt:
+        return "ans(810).\nans(Ans).\n"
+    # draft / solve
+    return "810"
 
-def ai_request(history: list, model: str, t: float = 0.2, max_retries: int = 3) -> str:
+def ai_request(history: list, model: str, t: float = 0.2, max_retries: int = 3, mock_llm: bool = False) -> str:
+    if mock_llm:
+        prompt = history[-1]["content"] if history else ""
+        return _mock_ai_answer(prompt)
+
     """Retry wrapper for client.chat.completions.create (openai>=1.x)."""
     last_err = None
     for attempt in range(max_retries):
         try:
-            resp = client.chat.completions.create(
+            resp = get_client().chat.completions.create(
                 model=model,
                 messages=history,
                 temperature=t,
@@ -517,9 +539,19 @@ def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
 # ======================
 # Main: Self-Guide (Round1 guideline -> Round2 solve)
 # ======================
-def self_guide_run(dataset: str, method: str, start_index: int = 0):
-    if not os.getenv("OPENAI_API_KEY", ""):
-        raise ValueError("OPENAI_API_KEY is empty. Please set env OPENAI_API_KEY.")
+def self_guide_run(
+    dataset: str,
+    method: str,
+    start_index: int = 0,
+    num_samples: int = 1,
+    force_task_type: Optional[str] = None,
+    data_path: Optional[str] = None,
+    log_dir_override: Optional[str] = None,
+    mock_llm: bool = False,
+):
+    if (not mock_llm) and (not os.getenv("OPENAI_API_KEY", "")):
+       raise ValueError("OPENAI_API_KEY is empty. Please set env OPENAI_API_KEY.")
+
 
     dataset_key = dataset.lower()
     method_key = method.lower()
@@ -529,21 +561,18 @@ def self_guide_run(dataset: str, method: str, start_index: int = 0):
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"Dataset file not found: {data_path}")
 
-    log_dir = f"log/{method_key}/{dataset_key}"
+    log_dir = log_dir_override or f"log/{method_key}/{dataset_key}"
     os.makedirs(log_dir, exist_ok=True)
 
     with open(data_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
     print(f"Self-Guide running: dataset={dataset_key}, method={method_key}, start_index={start_index}")
+    end = min(len(lines), start_index + num_samples)
     for i, line in tqdm(
-        # enumerate(lines[start_index:], start=start_index),
-        # total=len(lines) - start_index
-            enumerate(lines[start_index:start_index + 1], start=start_index),
-            total=1
+            enumerate(lines[start_index:end], start=start_index),
+            total=end - start_index,
     ):
-        if i >= start_index + 10:
-            break
         data = json.loads(line)
         sample_id = data.get("id", i)
         gold = data.get("answer", "")
@@ -578,7 +607,11 @@ def self_guide_run(dataset: str, method: str, start_index: int = 0):
 
         # ======== Round C': optional Prolog verification/execution (CaRing) ========
         route = "llm_only"
-        prolog_pack = {"enabled": False, "task_type": "No"}  # 默认不启用
+        prolog_pack = {
+            "enabled": False,
+            "task_type": "No",
+            "prolog_max_result": PROLOG_MAX_RESULT,
+        }  # 默认不启用
         llm_candidate = pred
         llm_candidate_norm = postprocess_pred(dataset_key, llm_candidate)
         final_answer = llm_candidate_norm
@@ -588,10 +621,8 @@ def self_guide_run(dataset: str, method: str, start_index: int = 0):
         if dataset_key in ("gsm8k", "prontoqa", "proofwriter"):
             task_type = parse_task_type_from_guideline(guideline)  # 期望返回 Yes/No/Partial
 
-            # ===== TEMP: force Prolog on first sample only =====
-            forced_task_type = os.getenv("FORCE_TASK_TYPE", "").strip()
-            if forced_task_type:
-                task_type = forced_task_type.capitalize()
+            if force_task_type:
+                task_type = force_task_type
 
             prolog_pack["task_type"] = task_type
             prolog_pack["enabled"] = (task_type in ("Yes", "Partial"))  # ✅ 只有 Yes/Partial 才算启用
@@ -608,13 +639,19 @@ def self_guide_run(dataset: str, method: str, start_index: int = 0):
                     prolog_pack["clauses"] = clauses
 
                     # (2) 执行 CaRing 的 call_swipl.py
-                    swipl_out = run_caring_call_swipl(dataset_key, clauses, max_result=20)
+                    swipl_out = run_caring_call_swipl(
+                        dataset_key,
+                        clauses,
+                        max_result=PROLOG_MAX_RESULT,
+                    )
 
                     # ✅ 强制保证 raw 字段存在（避免你之后解析时抓不到）
                     if "raw" not in swipl_out:
                         swipl_out["raw"] = ""
 
                     prolog_pack["swipl"] = swipl_out
+                    prolog_pack["clauses_count"] = len(clauses)
+                    prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
 
                     # 解析 Prolog answer + proof
                     prolog_answer, prolog_proof = parse_caring_swipl_answer(swipl_out.get("raw"))
@@ -660,17 +697,29 @@ def self_guide_run(dataset: str, method: str, start_index: int = 0):
                         prolog_pack["fallback_reason"] = route_reason
 
                 except Exception as e:
-                    prolog_pack["swipl"] = {"ok": False, "error": str(e), "raw": ""}
+                    prolog_pack["swipl"] = {
+                        "ok": False,
+                        "error": str(e),
+                        "raw": "",
+                        "cmd": None,
+                        "returncode": None,
+                    }
                     route = "llm_only"
                     final_answer = llm_candidate_norm
                     route_reason = f"Prolog parse/execute exception: {e}"
                     prolog_pack["fallback_reason"] = route_reason
+                    prolog_pack["clauses_count"] = None
+                    prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
             else:
                 route_reason = "Prolog disabled by task_type."
                 prolog_pack["fallback_reason"] = route_reason
+                prolog_pack["clauses_count"] = None
+                prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
         else:
             route_reason = "Dataset not supported for Prolog."
             prolog_pack["fallback_reason"] = route_reason
+            prolog_pack["clauses_count"] = None
+            prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
 
         add_message("assistant", final_answer, history)
         time.sleep(SLEEP_SEC)
@@ -688,6 +737,18 @@ def self_guide_run(dataset: str, method: str, start_index: int = 0):
                     "method": method_key,
                     "models": {"guide_model": GUIDE_MODEL, "solve_model": SOLVE_MODEL},
                     "format_rule": format_rule,
+                    "run_config": {
+                        "dataset": dataset_key,
+                        "method": method_key,
+                        "start_index": start_index,
+                        "num_samples": num_samples,
+                        "force_task_type": force_task_type,
+                        "solve_model": SOLVE_MODEL,
+                        "guide_model": GUIDE_MODEL,
+                        "prolog_max_result": PROLOG_MAX_RESULT,
+                        "prolog_enabled": prolog_pack.get("enabled", False),
+                        "prolog_task_type": prolog_pack.get("task_type"),
+                    },
                     "guideline": guideline,
                     "gold": gold,
                     "draft_raw": draft_raw,
@@ -719,6 +780,25 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", required=True, help="gsm8k / prontoqa / proofwriter / mmlu / clutrr / sqa / date")
     parser.add_argument("--method", required=True, help="sd_selfguide or cot_selfguide")
     parser.add_argument("--start_index", type=int, default=0)
+    parser.add_argument("--num_samples", type=int, default=1)
+    parser.add_argument(
+        "--force_task_type",
+        choices=("Yes", "No", "Partial"),
+        default=None,
+    )
+    parser.add_argument("--data_path", default=None, help="override dataset jsonl path")
+    parser.add_argument("--log_dir", default=None, help="override log directory")
+    parser.add_argument("--mock_llm", action="store_true", help="use deterministic mock outputs (no API call)")
+
     args = parser.parse_args()
 
-    self_guide_run(args.dataset, args.method, args.start_index)
+    self_guide_run(
+        args.dataset,
+        args.method,
+        args.start_index,
+        num_samples=args.num_samples,
+        force_task_type=args.force_task_type,
+        data_path=args.data_path,
+        log_dir_override=args.log_dir,
+        mock_llm=args.mock_llm,
+    )
