@@ -23,6 +23,8 @@ def ai_request(history, t=0.2, max_retries=3):
 
 
 def baseline(dataset, start_index=0):
+    if not os.getenv("OPENAI_API_KEY", ""):
+        raise ValueError("OPENAI_API_KEY is empty. Please set env OPENAI_API_KEY.")
     print(f"Running baseline for dataset: {dataset}")
     # Create directory for logs if it doesn't exist
     log_dir = f'log/baseline/{dataset}'
@@ -34,29 +36,34 @@ def baseline(dataset, start_index=0):
         lines = file.readlines()
 
         for i, line in tqdm(enumerate(lines[start_index:], start=start_index)):
+            if i >= start_index + 1:
+                break
             # Parse the JSON data
             data = json.loads(line)
 
             # Extract data from the JSON object
-            id = data['id']
-            question = data['question']
-            answers = data['answer']
+            sample_id = data.get("id", i)
+            question = data.get("question", "")
+            answers = data.get("answer", "")
 
             prompt0 = f"Question: {question} \nAnswer: "
 
             history = []
             add_message('user', prompt0, history)
+            print("DEBUG: before first request")
             output = ai_request(history)
+            print("DEBUG: after first request")
+
             add_message('assistant', output, history)
             time.sleep(1)
-            correctness = 'True' if answers in output else 'False'
+            correctness = 'True' if str(answers).strip() in str(output).strip() else 'False'
 
             # Save log
             log_filename = f'{dataset}_{i}.json'
             log_path = os.path.join(log_dir, log_filename)
             with open(log_path, 'w') as log_file:
                 json.dump({
-                    "id": id,
+                    "id": sample_id,
                     "question": question,
                     'answer': answers,
                     "correctness": correctness,
