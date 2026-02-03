@@ -14,6 +14,10 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from pathlib import Path
+print("RUNNING:", Path(__file__).resolve())
+
+
 # 解析 Guideline 里的 task_type（Yes/No/Partial）
 # 构造 “只输出 Prolog” 的提示词（给 Round C 的 Prolog 生成用）
 # 把 Prolog 输出清洗成 clauses，并 subprocess 调 CaRing 的 call_swipl.py
