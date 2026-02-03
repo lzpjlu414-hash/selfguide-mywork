@@ -1,7 +1,6 @@
 import json
 import csv
 import time
-import openai
 import numpy as np
 from tqdm import tqdm
 import os
@@ -9,24 +8,19 @@ from argparse import ArgumentParser
 import re
 import ast
 
-openai.api_key = ""
-openai.api_base = ""
+from src.llm_client import chat
 
-MODEL = "gpt-3.5-turbo-1106"
 
 
 def add_message(role, content, history):
     history.append({"role": role, "content": content})
 
 
-def ai_request(history, t=0.2):
-    response = openai.ChatCompletion.create(
-        model=MODEL,
-        messages=history,
-        temperature=t,
-    )
-    output = response["choices"][0]["message"]["content"]
-    return output
+MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-1106")
+
+def ai_request(history, t=0.2, max_retries=3):
+    return chat(messages=history, model=MODEL, temperature=t, max_retries=max_retries)
+
 
 def baseline(dataset, start_index=0):
     print(f"Running baseline for dataset: {dataset}")

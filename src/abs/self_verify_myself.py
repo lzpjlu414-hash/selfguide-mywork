@@ -4,15 +4,14 @@ import os
 import re
 from typing import Optional
 
-import openai
+
 from tqdm import tqdm
 from argparse import ArgumentParser
 
 
 # ============= OpenAI config =============
 # 推荐用环境变量：OPENAI_API_KEY / OPENAI_API_BASE
-openai.api_key = os.getenv("OPENAI_API_KEY", "")
-openai.api_base = os.getenv("OPENAI_API_BASE", None) or openai.api_base
+
 
 MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-1106")
 
@@ -21,21 +20,11 @@ def add_message(role: str, content: str, history: list):
     history.append({"role": role, "content": content})
 
 
+from src.llm_client import chat
+
 def ai_request(history: list, t: float = 0.2, max_retries: int = 3) -> str:
-    """Simple retry wrapper for ChatCompletion."""
-    last_err = None
-    for attempt in range(max_retries):
-        try:
-            resp = openai.ChatCompletion.create(
-                model=MODEL,
-                messages=history,
-                temperature=t,
-            )
-            return resp["choices"][0]["message"]["content"]
-        except Exception as e:
-            last_err = e
-            time.sleep(1 + attempt)  # simple backoff
-    raise RuntimeError(f"OpenAI request failed after {max_retries} retries: {last_err}")
+    return chat(messages=history, model=MODEL, temperature=t, max_retries=max_retries)
+
 
 
 # ============= Prompt builders =============
@@ -197,8 +186,8 @@ def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
 
 # ============= Main loop =============
 def baseline(dataset: str, method: str, start_index: int = 0):
-    if not openai.api_key:
-        raise ValueError("OPENAI_API_KEY is empty. Please set env OPENAI_API_KEY or edit the script.")
+    if not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OPENAI_API_KEY is empty. Please set env OPENAI_API_KEY.")
 
     dataset_key = dataset.lower()
     method_key = method.lower()

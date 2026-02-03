@@ -15,8 +15,8 @@ import tempfile
 
 
 from .call_swipl import consult_prolog
-import .parse_proof_gold as parse_gold
-import .parse_proof_pred as parse_pred
+from . import parse_proof_gold as parse_gold
+from . import parse_proof_pred as parse_pred
 
 random.seed(42)
 
