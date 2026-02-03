@@ -1,28 +1,16 @@
 import json
 import time
-import openai
 from tqdm import tqdm
 import os
 from argparse import ArgumentParser
 import re #正则：主要用于 MMLU 的 A/B/C/D 抽取：re.search(r"\b([a-d])\b", pred_s)
+from src.llm_client import chat
 
-openai.api_key = ""
-openai.api_base = ""
-
-MODEL = "gpt-3.5-turbo-1106" #全局model
-
+MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-1106")
 
 def add_message(role, content, history):
     history.append({"role": role, "content": content})
 
-
-def ai_request(history, t=0.2):
-    response = openai.ChatCompletion.create(
-        model=MODEL,
-        messages=history,
-        temperature=t,
-    )
-    return response["choices"][0]["message"]["content"]
 
 
 def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
@@ -121,10 +109,9 @@ def baseline(dataset, method, start_index=0):
             raise ValueError(f"Unsupported dataset: {dataset}. Please handle it in code.")
 
         # ---------- 第一轮请求 ----------
-        history0 = []
-        add_message('user', prompt0, history0)
-        output0 = ai_request(history0)
-        add_message('assistant', output0, history0)
+        history0 = [{"role": "user", "content": prompt0}]
+        output0 = chat(history0, model=MODEL, temperature=0.2)
+        history0.append({"role": "assistant", "content": output0})
         time.sleep(1)
 
         # ---------- 构造第二轮 prompt1（按 dataset 自动切换输出约束） ----------
@@ -163,10 +150,9 @@ Please give your final answer.
 Answer: """
 
         # ---------- 第二轮请求 ----------
-        history1 = []
-        add_message('user', prompt1, history1)
-        output = ai_request(history1)
-        add_message('assistant', output, history1)
+        history1 = [{"role": "user", "content": prompt1}]
+        output = chat(history1, model=MODEL, temperature=0.2)
+        history1.append({"role": "assistant", "content": output})
         time.sleep(1)
 
         # ---------- 判分 ----------

@@ -6,24 +6,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import json
 import csv
 import time
-import openai
+
 import numpy as np
 from tqdm import tqdm
-import os
 from argparse import ArgumentParser
 
-#openai.api_key = ""
-##openai.api_base = ""
-from openai import OpenAI
-from openai import OpenAI
-import os
-
-from openai import OpenAI
-import os
-# client = OpenAI(
-#     api_key=os.environ.get("DEEPSEEK_API_KEY"), # 关键：从新环境变量读取
-#     base_url="https://api.deepseek.com/v1"      # 关键：指向DeepSeek
-# )
+from src.llm_client import chat
 
 #MODEL = "gpt-3.5-turbo-1106"
 MODEL = "deepseek-chat"  # 这是DeepSeek的主要对话模型
@@ -37,28 +25,14 @@ def extract_answer(text: str) -> str:
 def add_message(role, content, history):
     history.append({"role": role, "content": content})#往对话历史里追加消息
 
-
-def ai_request(history, t=0.2):#发请求的函数：ai_request
-    #response = openai.ChatCompletion.create(
-        #model=MODEL,
-       # messages=history,
-        #temperature=t,
-    #)
+def ai_request(history, t=0.2):  # 发请求的函数：ai_request
     print(f"[DEBUG] 进入ai_request，历史长度: {len(history)}")
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=history,
-        temperature=t,  # 先将变量`t`改为固定值0.7以确保运行
-    )
-    ##output = response["choices"][0]["message"]["content"]
-    output = response.choices[0].message.content
-    return output
+    return chat(history, model=MODEL, temperature=t)
 
-def baseline(dataset, start_index=0): #主流程函数：baseline(dataset, start_index=0)
-    print(f"[DEBUG] Client base_url: {client.base_url}") #请求发到哪里（base_url 对不对）
-    print(f"[DEBUG] Client api_key 前缀: {client.api_key[:10] if client.api_key else 'None'}...")#key 有没有加载到（是否为 None，且不直接泄露完整 key）
-    print(f"[DEBUG] 进入baseline函数，数据集: {dataset}")#baseline 函数是否进入
-    print(f"Running baseline for dataset: {dataset}")#当前正在跑哪个数据集
+
+def baseline(dataset, start_index=0):  # 主流程函数：baseline(dataset, start_index=0)
+    print(f"[DEBUG] 进入baseline函数，数据集: {dataset}")  # baseline 函数是否进入
+    print(f"Running baseline for dataset: {dataset}")  # 当前正在跑哪个数据集
     # Create directory for logs if it doesn't exist
     #创建日志目录
     log_dir = f'log/{dataset}'#log/CLUTRR 这种目录，不存在就创建。
