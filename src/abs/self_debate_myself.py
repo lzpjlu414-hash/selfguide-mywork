@@ -2,9 +2,11 @@ import json
 import time
 from tqdm import tqdm
 import os
+import sys
 from argparse import ArgumentParser
 import re #正则：主要用于 MMLU 的 A/B/C/D 抽取：re.search(r"\b([a-d])\b", pred_s)
 from src.llm_client import chat
+from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
 
 MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-1106")
 
@@ -31,7 +33,8 @@ def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
     return "True" if gold_s in pred_s else "False"
 
 
-def baseline(dataset, method, start_index=0):
+def baseline(dataset, method, start_index=0, data_path=None):
+    validate_openai_api_key(mock_llm=False)
     print(f"Running baseline for dataset: {dataset}")
 
     dataset_key = dataset.lower()
@@ -40,7 +43,13 @@ def baseline(dataset, method, start_index=0):
     log_dir = f'log/{method}/{dataset}'
     os.makedirs(log_dir, exist_ok=True)
 
-    with open(f"log_guideline/{dataset}.jsonl", 'r', encoding='utf-8') as file:
+    try:
+        data_path = resolve_data_path(dataset_key, data_path)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(2)
+
+    with open(data_path, 'r', encoding='utf-8') as file:
         lines = file.readlines()
 
     for i, line in tqdm(enumerate(lines[start_index:], start=start_index)):
@@ -177,6 +186,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", help="Dataset name")
     parser.add_argument("--start_index", type=int, default=0, help="Start index to begin processing")
     parser.add_argument("--method", help="sd_debate or cot_debate")
+    parser.add_argument("--data_path", default=None)
     args = parser.parse_args()
 
-    baseline(args.dataset, args.method, args.start_index)
+    baseline(args.dataset, args.method, args.start_index, data_path=args.data_path)

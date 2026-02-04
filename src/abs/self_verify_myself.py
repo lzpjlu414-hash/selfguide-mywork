@@ -2,6 +2,7 @@ import json
 import time
 import os
 import re
+import sys
 from typing import Optional
 
 
@@ -21,6 +22,7 @@ def add_message(role: str, content: str, history: list):
 
 
 from src.llm_client import chat
+from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
 
 def ai_request(history: list, t: float = 0.2, max_retries: int = 3) -> str:
     return chat(messages=history, model=MODEL, temperature=t, max_retries=max_retries)
@@ -185,9 +187,8 @@ def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
 
 
 # ============= Main loop =============
-def baseline(dataset: str, method: str, start_index: int = 0):
-    if not os.getenv("OPENAI_API_KEY"):
-        raise ValueError("OPENAI_API_KEY is empty. Please set env OPENAI_API_KEY.")
+def baseline(dataset: str, method: str, start_index: int = 0, data_path: Optional[str] = None):
+    validate_openai_api_key(mock_llm=False)
 
     dataset_key = dataset.lower()
     method_key = method.lower()
@@ -197,7 +198,8 @@ def baseline(dataset: str, method: str, start_index: int = 0):
     log_dir = f"log/{method_key}/{dataset_key}"
     os.makedirs(log_dir, exist_ok=True)
 
-    data_path = f"log_guideline/{dataset}.jsonl"
+    def baseline(dataset: str, method: str, start_index: int = 0, data_path: Optional[str] = None):
+        validate_openai_api_key(mock_llm=False)
     with open(data_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
@@ -256,6 +258,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", required=True, help="mmlu / clutrr / sqa / date")
     parser.add_argument("--method", required=True, help="sd_verify or cot_verify")
     parser.add_argument("--start_index", type=int, default=0)
+    parser.add_argument("--data_path", default=None)
     args = parser.parse_args()
 
-    baseline(args.dataset, args.method, args.start_index)
+    baseline(args.dataset, args.method, args.start_index, data_path=args.data_path)

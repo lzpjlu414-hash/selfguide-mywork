@@ -4,9 +4,11 @@ import json
 import sys
 import time
 import tempfile
+import uuid
 import subprocess
 from argparse import ArgumentParser
 from pathlib import Path
+from typing import Optional
 
 
 def _read_lines_utf8_sig(path: str):
@@ -26,6 +28,22 @@ def _safe_remove(path: str, retries: int = 8, sleep_sec: float = 0.1):
             time.sleep(sleep_sec)
         except Exception:
             return
+
+def _resolve_tmp_root(tmp_dir: Optional[str]) -> Path:
+    if tmp_dir:
+        return Path(tmp_dir).expanduser().resolve()
+    env_dir = os.getenv("TMP_PROLOG_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    return (Path.cwd() / "tmp_prolog").resolve()
+
+
+def _make_run_dir(tmp_dir: Optional[str]) -> Path:
+    root = _resolve_tmp_root(tmp_dir)
+    run_id = f"gsm8k_{os.getpid()}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    run_dir = (root / run_id).resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
 
 
 def _wrap_query(query_string: str, meta_interpreter: str, max_depth: int):
@@ -128,6 +146,7 @@ def main():
     parser.add_argument("--max_result", type=int, default=20)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--keep_tmp", action="store_true")
+    parser.add_argument("--tmp_dir", default=None)
 
     # 可选参数：如果你后续要 proof / iter deep，就用它们
     parser.add_argument("--meta_interpreter", type=str, default="raw",
@@ -146,7 +165,8 @@ def main():
     wrapped_query = _wrap_query(orig_query, args.meta_interpreter, args.max_depth)
 
     # 写一个“只替换 query 行”的临时 assert 文件（facts 原样保留）
-    tmp_assert = tempfile.NamedTemporaryFile(suffix=".pl", delete=False)
+    run_dir = _make_run_dir(args.tmp_dir)
+    tmp_assert = tempfile.NamedTemporaryFile(suffix=".pl", delete=False, dir=run_dir)
     try:
         with open(tmp_assert.name, "w", encoding="utf-8", newline="\n") as f:
             for ln in facts:
@@ -162,73 +182,78 @@ def main():
         except Exception:
             pass
 
-    tmp_out = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False)
+    tmp_out = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, dir=run_dir)
     try:
         tmp_out.close()
     except Exception:
         pass
 
-    # 调 individual_prologging
-    p = _run_individual_prologging(tmp_assert.name, args.mi_path, tmp_out.name, args.max_result, args.debug)
-    # 把执行信息也写入 output，便于你在 self_guide log 里直接看到原因
-    exec_meta = {
-        "returncode": p.returncode,
-        "stderr_tail": (p.stderr or "")[-2000:],
-        "stdout_tail": (p.stdout or "")[-2000:],
-        "meta_interpreter": args.meta_interpreter,
-        "max_depth": args.max_depth,
-        "assert_path": args.assert_path,
-        "out_path": args.output_path,
-    }
+    try:
+        # 调 individual_prologging
+        p = _run_individual_prologging(tmp_assert.name, args.mi_path, tmp_out.name, args.max_result, args.debug)
+        # 把执行信息也写入 output，便于你在 self_guide log 里直接看到原因
+        exec_meta = {
+            "returncode": p.returncode,
+            "stderr_tail": (p.stderr or "")[-2000:],
+            "stdout_tail": (p.stdout or "")[-2000:],
+            "meta_interpreter": args.meta_interpreter,
+            "max_depth": args.max_depth,
+            "assert_path": args.assert_path,
+            "out_path": args.output_path,
+        }
 
+        results = _read_jsonl(tmp_out.name)
 
-    results = _read_jsonl(tmp_out.name)
+        # 从 orig_query 里抓变量名：daily_profit(Profit) -> Profit
+        # 从 orig_query 抽变量名作为答案 key（更稳：不依赖一元谓词）
+        output = {"answer": [], "proofs": []}
 
-    # 从 orig_query 里抓变量名：daily_profit(Profit) -> Profit
-    # 从 orig_query 抽变量名作为答案 key（更稳：不依赖一元谓词）
-    output = {"answer": [], "proofs": []}
+        q0 = (orig_query or "").strip().rstrip(".")
+        vars_in_q = [v for v in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", q0) if v != "Proof"]
+        key = vars_in_q[0] if vars_in_q else None  # 默认取第一个变量作为“答案变量”
 
-    q0 = (orig_query or "").strip().rstrip(".")
-    vars_in_q = [v for v in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", q0) if v != "Proof"]
-    key = vars_in_q[0] if vars_in_q else None  # 默认取第一个变量作为“答案变量”
+        answers = []
+        for r in results:
+            if not isinstance(r, dict):
+                continue
 
-    answers = []
-    for r in results:
-        if not isinstance(r, dict):
-            continue
+            # 取答案
+            if key and key in r:
+                answers.append(r[key])
+            elif not key:
+                # query 没变量时，尝试常见命名兜底（可按你的数据集再加）
+                for k in ("Answer", "Ans", "Result", "X"):
+                    if k in r:
+                        answers.append(r[k])
+                        break
 
-        # 取答案
-        if key and key in r:
-            answers.append(r[key])
-        elif not key:
-            # query 没变量时，尝试常见命名兜底（可按你的数据集再加）
-            for k in ("Answer", "Ans", "Result", "X"):
-                if k in r:
-                    answers.append(r[k])
-                    break
-
-    if not key and not answers and results:
+        if not key and not answers and results:
             answers = ["True"]
 
-    if answers:
-        # 保序去重
-        output["answer"] = list(dict.fromkeys(str(a) for a in answers))
-    if args.meta_interpreter in ("with_proof", "iter_deep_with_proof"):
-        proofs = _collect_proofs(results)
-        output["proofs"] = proofs if proofs else ["NO_PROOF_RETURNED"]
-    output["exec"] = exec_meta
+        if answers:
+            # 保序去重
+            output["answer"] = list(dict.fromkeys(str(a) for a in answers))
+        if args.meta_interpreter in ("with_proof", "iter_deep_with_proof"):
+            proofs = _collect_proofs(results)
+            output["proofs"] = proofs if proofs else ["NO_PROOF_RETURNED"]
+        output["exec"] = exec_meta
 
-    os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
-    with open(args.output_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False)
+        os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
+        with open(args.output_path, "w", encoding="utf-8") as f:
+            json.dump(output, f, ensure_ascii=False)
+        returncode = p.returncode
+    finally:
+        if not (args.debug or args.keep_tmp):
+            _safe_remove(tmp_assert.name)
+            _safe_remove(tmp_out.name)
+            try:
+                run_dir.rmdir()
+            except Exception:
+                pass
 
-    # 清理临时文件（debug 时也清理，避免你目录堆垃圾；要保留就自己注释掉）
-    if not (args.debug or args.keep_tmp):
-        _safe_remove(tmp_assert.name)
-        _safe_remove(tmp_out.name)
 
     # 让上层能感知失败：individual_prologging 非 0 就非 0
-    sys.exit(p.returncode)
+    sys.exit(returncode)
 
 
 if __name__ == "__main__":

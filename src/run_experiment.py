@@ -1,14 +1,12 @@
-import os
 import sys
 from argparse import ArgumentParser
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
-
-from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
-
-from src.abs.self_guide_myself import self_guide_run
+try:
+    from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
+    from src.abs.self_guide_myself import self_guide_run
+except ImportError:  # pragma: no cover - fallback for direct script execution
+    from utils.dataset_io import resolve_data_path, validate_openai_api_key
+    from abs.self_guide_myself import self_guide_run
 
 
 def main() -> None:
@@ -28,6 +26,8 @@ def main() -> None:
     parser.add_argument("--meta_interpreter", default="iter_deep_with_proof")
     parser.add_argument("--max_depth", type=int, default=25)
     parser.add_argument("--prolog_max_result", type=int, default=20)
+    parser.add_argument("--tmp_dir", default=None, help="root dir for Prolog temp files")
+    parser.add_argument("--keep_tmp", action="store_true", help="keep Prolog temp files")
 
     args = parser.parse_args()
 
@@ -50,6 +50,8 @@ def main() -> None:
         meta_interpreter=args.meta_interpreter,
         max_depth=args.max_depth,
         prolog_max_result=args.prolog_max_result,
+        tmp_dir=args.tmp_dir,
+        keep_tmp=args.keep_tmp,
     )
 
 

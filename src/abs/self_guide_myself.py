@@ -15,17 +15,22 @@ from argparse import ArgumentParser
 from pathlib import Path
 import subprocess
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
-
-from src.llm_client import chat_complete, resolve_model
-from src.utils.dataset_io import load_dataset, resolve_data_path, validate_openai_api_key
-from src.utils.scoring import (
-    extract_gsm8k_final_number as extract_gsm8k_number,
-    postprocess_pred as postprocess_gsm8k_pred,
-    judge_correctness as judge_dataset_correctness,
-)
+try:
+    from src.llm_client import chat_complete, resolve_model
+    from src.utils.dataset_io import load_dataset, resolve_data_path, validate_openai_api_key
+    from src.utils.scoring import (
+        extract_gsm8k_final_number as extract_gsm8k_number,
+        postprocess_pred as postprocess_gsm8k_pred,
+        judge_correctness as judge_dataset_correctness,
+    )
+except ImportError:  # pragma: no cover - fallback for direct script execution
+    from llm_client import chat_complete, resolve_model
+    from utils.dataset_io import load_dataset, resolve_data_path, validate_openai_api_key
+    from utils.scoring import (
+        extract_gsm8k_final_number as extract_gsm8k_number,
+        postprocess_pred as postprocess_gsm8k_pred,
+        judge_correctness as judge_dataset_correctness,
+    )
 
 # 解析 Guideline 里的 task_type（Yes/No/Partial）
 # 构造 “只输出 Prolog” 的提示词（给 Round C 的 Prolog 生成用）
@@ -156,6 +161,14 @@ def extract_prolog_clauses(code: str) -> list:
 
     return clauses
 
+def _resolve_tmp_root(tmp_dir: Optional[str]) -> Path:
+    if tmp_dir:
+        return Path(tmp_dir).expanduser().resolve()
+    env_dir = os.getenv("TMP_PROLOG_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    return (Path(os.getcwd()) / "tmp_prolog").resolve()
+
 def run_caring_call_swipl(
     dataset_key: str,
     clauses: list,
@@ -164,6 +177,7 @@ def run_caring_call_swipl(
     max_depth: int = 25,
     debug: bool = False,
     keep_tmp: bool = False,
+    tmp_dir: Optional[str] = None,
 ) -> dict:
     caring_root = (Path(__file__).resolve().parent.parent / "caring").resolve()
 
@@ -179,12 +193,13 @@ def run_caring_call_swipl(
     if not mi_pl.exists():
         raise FileNotFoundError(f"meta_interpreter.pl not found: {mi_pl}")
 
-    tmp_dir = (Path(os.getcwd()) / "tmp_prolog").resolve()
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_root = _resolve_tmp_root(tmp_dir)
+    run_id = f"{dataset_key}_{os.getpid()}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    run_dir = (tmp_root / run_id).resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
 
-    unique_id = f"{dataset_key}_{os.getpid()}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
-    assert_path = tmp_dir / f"{unique_id}_assert.pl"
-    out_path = tmp_dir / f"{unique_id}_out.json"
+    assert_path = run_dir / f"{run_id}_assert.pl"
+    out_path = run_dir / f"{run_id}_out.json"
 
     assert_path.write_text("\n".join(clauses) + "\n", encoding="utf-8")
 
@@ -201,6 +216,8 @@ def run_caring_call_swipl(
         cmd.append("--debug")
     if keep_tmp:
         cmd.append("--keep_tmp")
+    if tmp_dir:
+        cmd.extend(["--tmp_dir", str(tmp_dir)])
 
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -226,6 +243,8 @@ def run_caring_call_swipl(
                 out_path.unlink(missing_ok=True)
             except Exception:
                 pass
+            if tmp_dir:
+                cmd.extend(["--tmp_dir", str(tmp_dir)])
         return result
 
     raw = out_path.read_text(encoding="utf-8").strip() if out_path.exists() else ""
@@ -260,6 +279,10 @@ def run_caring_call_swipl(
             pass
         try:
             out_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            run_dir.rmdir()
         except Exception:
             pass
     return result
@@ -561,6 +584,7 @@ def self_guide_run(
     prolog_max_result: int = PROLOG_MAX_RESULT,
     debug: bool = False,
     keep_tmp: bool = False,
+    tmp_dir: Optional[str] = None,
 ):
     validate_openai_api_key(mock_llm)
 
@@ -568,8 +592,6 @@ def self_guide_run(
     dataset_key = dataset.lower()
     method_key = method.lower()
 
-    # data_path = f"log_guideline/{dataset}.jsonl"
-    data_path = data_path or f"log/{dataset_key}.jsonl"
     try:
         data_path = resolve_data_path(dataset_key, data_path)
     except FileNotFoundError as exc:
@@ -695,6 +717,7 @@ def self_guide_run(
                         max_depth=max_depth,
                         debug=debug,
                         keep_tmp=keep_tmp,
+                        tmp_dir=tmp_dir,
                     )
 
                     # ✅ 强制保证 raw 字段存在（避免你之后解析时抓不到）
@@ -872,6 +895,7 @@ if __name__ == "__main__":
     parser.add_argument("--prolog_max_result", type=int, default=PROLOG_MAX_RESULT)
     parser.add_argument("--debug", action="store_true", help="enable debug logging and keep tmp files")
     parser.add_argument("--keep_tmp", action="store_true", help="keep Prolog temp files")
+    parser.add_argument("--tmp_dir", default=None, help="root dir for Prolog temp files")
 
     args = parser.parse_args()
 
@@ -890,4 +914,5 @@ if __name__ == "__main__":
         prolog_max_result=args.prolog_max_result,
         debug=args.debug,
         keep_tmp=args.keep_tmp,
+        tmp_dir=args.tmp_dir,
     )

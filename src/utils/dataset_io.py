@@ -60,6 +60,7 @@ def resolve_data_path(dataset_key: str, data_path: Optional[str] = None, base_di
         root / "data" / normalized / "test.jsonl",
         root / "data" / normalized / "test_small.jsonl",
         root / "log" / f"{normalized}.jsonl",
+        root / "log_guideline" / f"{normalized}.jsonl",
     ]
     for candidate in candidates:
         tried.append(str(candidate))

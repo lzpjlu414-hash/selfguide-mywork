@@ -1,5 +1,6 @@
 import tempfile
 import os
+import uuid
 import re
 import subprocess
 import json
@@ -7,6 +8,7 @@ import sys
 import time
 from argparse import ArgumentParser
 from pathlib import Path
+from typing import Optional
 
 curr_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -26,6 +28,22 @@ def _safe_remove(path: str, retries: int = 8, sleep_sec: float = 0.1):
             time.sleep(sleep_sec)
         except Exception:
             return
+
+def _resolve_tmp_root(tmp_dir: Optional[str]) -> Path:
+    if tmp_dir:
+        return Path(tmp_dir).expanduser().resolve()
+    env_dir = os.getenv("TMP_PROLOG_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    return (Path.cwd() / "tmp_prolog").resolve()
+
+
+def _make_run_dir(tmp_dir: Optional[str]) -> Path:
+    root = _resolve_tmp_root(tmp_dir)
+    run_id = f"proofwriter_{os.getpid()}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    run_dir = (root / run_id).resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
 
 
 def _wrap_query(query_string: str, meta_interpreter: str, max_depth: int):
@@ -161,6 +179,7 @@ def consult_prolog(
         dataset_name="vanilla",
         max_result=20,
         keep_tmp=False,
+        tmp_dir=None,
 ):
     
     """
@@ -193,56 +212,63 @@ def consult_prolog(
     # import pdb; pdb.set_trace()
 
     # Write the Prolog knowledge base to a temporary file.
-    tmp_clause_file = tempfile.NamedTemporaryFile(suffix=".txt", delete=False)
-    with open(tmp_clause_file.name, 'w') as f:
-        f.writelines(
-            [clause.strip() + '\n' for clause in clauses] + [user_query + '\n']
+    run_dir = _make_run_dir(tmp_dir)
+    tmp_clause_file = tempfile.NamedTemporaryFile(suffix=".txt", delete=False, dir=run_dir)
+    tmp_output_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False, dir=run_dir)
+    try:
+        with open(tmp_clause_file.name, 'w') as f:
+            f.writelines(
+                [clause.strip() + '\n' for clause in clauses] + [user_query + '\n']
+            )
+
+        file_path = os.path.dirname(os.path.abspath(__file__))
+        mi_path = os.path.join(file_path, "meta_interpreter.pl")
+        tmp_clause_path = os.path.abspath(tmp_clause_file.name)
+        tmp_output_path = os.path.abspath(tmp_output_file.name)
+
+        ###### Execute Prolog ######
+        response = _run_individual_prologging(
+            tmp_clause_path,
+            mi_path,
+            tmp_output_path,
+            max_result=max_result,
+            debug=debug,
         )
-    tmp_output_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
-    
-    file_path = os.path.dirname(os.path.abspath(__file__))
-    mi_path = os.path.join(file_path, "meta_interpreter.pl")
-    tmp_clause_path = os.path.abspath(tmp_clause_file.name)
-    tmp_output_path = os.path.abspath(tmp_output_file.name)
 
-    ###### Execute Prolog ######
-    response = _run_individual_prologging(
-        tmp_clause_path,
-        mi_path,
-        tmp_output_path,
-        max_result=max_result,
-        debug=debug,
-    )
+        exec_meta = {
+            "returncode": response.returncode,
+            "stderr_tail": (response.stderr or "")[-2000:],
+            "stdout_tail": (response.stdout or "")[-2000:],
+            "meta_interpreter": meta_interpreter,
+            "max_depth": max_depth,
+            "assert_path": tmp_clause_path,
+            "out_path": tmp_output_path,
+        }
 
-    exec_meta = {
-        "returncode": response.returncode,
-        "stderr_tail": (response.stderr or "")[-2000:],
-        "stdout_tail": (response.stdout or "")[-2000:],
-        "meta_interpreter": meta_interpreter,
-        "max_depth": max_depth,
-        "assert_path": tmp_clause_path,
-        "out_path": tmp_output_path,
-    }
+        results = _read_jsonl(tmp_output_file.name) if response.returncode == 0 else []
 
-    results = _read_jsonl(tmp_output_file.name) if response.returncode == 0 else []
+        output = {
+            "answer": None,
+            "proofs": [],
+            "exec": exec_meta,
+        }
 
-    output = {
-        "answer": None,
-        "proofs": [],
-        "exec": exec_meta,
-    }
+        if results:
+            output["answer"] = True
+        if meta_interpreter in ("with_proof", "iter_deep_with_proof"):
+            output["proofs"] = _collect_proofs(results)
 
-    if results:
-        output["answer"] = True
-    if meta_interpreter in ("with_proof", "iter_deep_with_proof"):
-        output["proofs"] = _collect_proofs(results)
-    if not (debug or keep_tmp):
-        _safe_remove(tmp_clause_file.name)
-        _safe_remove(tmp_output_file.name)
-    
-    # import pdb; pdb.set_trace()
-    
-    return output
+        # import pdb; pdb.set_trace()
+        return output
+
+    finally:
+        if not (debug or keep_tmp):
+            _safe_remove(tmp_clause_file.name)
+            _safe_remove(tmp_output_file.name)
+            try:
+                run_dir.rmdir()
+            except Exception:
+                pass
 def main():
     parser = ArgumentParser()
     parser.add_argument("--assert_path", type=str, required=True)
@@ -251,6 +277,7 @@ def main():
     parser.add_argument("--max_result", type=int, default=20)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--keep_tmp", action="store_true")
+    parser.add_argument("--tmp_dir", default=None)
     parser.add_argument(
         "--meta_interpreter",
         type=str,
@@ -269,7 +296,8 @@ def main():
 
     wrapped_query = _wrap_query(orig_query, args.meta_interpreter, args.max_depth)
 
-    tmp_assert = tempfile.NamedTemporaryFile(suffix=".pl", delete=False)
+    run_dir = _make_run_dir(args.tmp_dir)
+    tmp_assert = tempfile.NamedTemporaryFile(suffix=".pl", delete=False, dir=run_dir)
     try:
         with open(tmp_assert.name, "w", encoding="utf-8", newline="\n") as f:
             for ln in facts:
@@ -284,61 +312,67 @@ def main():
         except Exception:
             pass
 
-    tmp_out = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False)
+    tmp_out = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, dir=run_dir)
     try:
         tmp_out.close()
     except Exception:
         pass
 
-    p = _run_individual_prologging(tmp_assert.name, args.mi_path, tmp_out.name, args.max_result, args.debug)
-    exec_meta = {
-        "returncode": p.returncode,
-        "stderr_tail": (p.stderr or "")[-2000:],
-        "stdout_tail": (p.stdout or "")[-2000:],
-        "meta_interpreter": args.meta_interpreter,
-        "max_depth": args.max_depth,
-        "assert_path": args.assert_path,
-        "out_path": args.output_path,
-    }
+    try:
+        p = _run_individual_prologging(tmp_assert.name, args.mi_path, tmp_out.name, args.max_result, args.debug)
+        exec_meta = {
+            "returncode": p.returncode,
+            "stderr_tail": (p.stderr or "")[-2000:],
+            "stdout_tail": (p.stdout or "")[-2000:],
+            "meta_interpreter": args.meta_interpreter,
+            "max_depth": args.max_depth,
+            "assert_path": args.assert_path,
+            "out_path": args.output_path,
+        }
 
-    results = _read_jsonl(tmp_out.name)
+        results = _read_jsonl(tmp_out.name)
 
-    output = {"answer": [], "proofs": [], "exec": exec_meta}
+        output = {"answer": [], "proofs": [], "exec": exec_meta}
 
-    q0 = (orig_query or "").strip().rstrip(".")
-    vars_in_q = [v for v in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", q0) if v != "Proof"]
-    key = vars_in_q[0] if vars_in_q else None
+        q0 = (orig_query or "").strip().rstrip(".")
+        vars_in_q = [v for v in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", q0) if v != "Proof"]
+        key = vars_in_q[0] if vars_in_q else None
 
-    answers = []
-    for r in results:
-        if not isinstance(r, dict):
-            continue
-        if key and key in r:
-            answers.append(r[key])
-        elif not key:
-            for k in ("Answer", "Ans", "Result", "X"):
-                if k in r:
-                    answers.append(r[k])
-                    break
+        answers = []
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            if key and key in r:
+                answers.append(r[key])
+            elif not key:
+                for k in ("Answer", "Ans", "Result", "X"):
+                    if k in r:
+                        answers.append(r[k])
+                        break
 
-    if not key and not answers and results:
-        answers = ["True"]
+        if not key and not answers and results:
+            answers = ["True"]
 
-    if answers:
-        output["answer"] = list(dict.fromkeys(str(a) for a in answers))
-    if args.meta_interpreter in ("with_proof", "iter_deep_with_proof"):
-        proofs = _collect_proofs(results)
-        output["proofs"] = proofs if proofs else ["NO_PROOF_RETURNED"]
+        if answers:
+            output["answer"] = list(dict.fromkeys(str(a) for a in answers))
+        if args.meta_interpreter in ("with_proof", "iter_deep_with_proof"):
+            proofs = _collect_proofs(results)
+            output["proofs"] = proofs if proofs else ["NO_PROOF_RETURNED"]
 
-    os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
-    with open(args.output_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False)
+        os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
+        with open(args.output_path, "w", encoding="utf-8") as f:
+            json.dump(output, f, ensure_ascii=False)
+        returncode = p.returncode
+    finally:
+        if not (args.debug or args.keep_tmp):
+            _safe_remove(tmp_assert.name)
+            _safe_remove(tmp_out.name)
+            try:
+                run_dir.rmdir()
+            except Exception:
+                pass
 
-    if not (args.debug or args.keep_tmp):
-        _safe_remove(tmp_assert.name)
-        _safe_remove(tmp_out.name)
-
-    sys.exit(p.returncode)
+    sys.exit(returncode)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,6 @@
-import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
+import sys
 import json
 import csv
 import time
@@ -12,6 +10,7 @@ from tqdm import tqdm
 from argparse import ArgumentParser
 
 from src.llm_client import chat
+from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
 
 #MODEL = "gpt-3.5-turbo-1106"
 MODEL = "deepseek-chat"  # 这是DeepSeek的主要对话模型
@@ -30,17 +29,24 @@ def ai_request(history, t=0.2):  # 发请求的函数：ai_request
     return chat(history, model=MODEL, temperature=t)
 
 
-def baseline(dataset, start_index=0):  # 主流程函数：baseline(dataset, start_index=0)
+def baseline(dataset, start_index=0, data_path=None):  # 主流程函数：baseline(dataset, start_index=0)
+    validate_openai_api_key(mock_llm=False)
     print(f"[DEBUG] 进入baseline函数，数据集: {dataset}")  # baseline 函数是否进入
     print(f"Running baseline for dataset: {dataset}")  # 当前正在跑哪个数据集
+    dataset_key = dataset.lower()
     # Create directory for logs if it doesn't exist
     #创建日志目录
     log_dir = f'log/{dataset}'#log/CLUTRR 这种目录，不存在就创建。
     os.makedirs(log_dir, exist_ok=True)#exist_ok=True：如果目录已存在也不报错。
 
     # Open the JSONL file 读取数据集文件（jsonl）
-    #with open(f'data/{dataset}/test.jsonl', 'r', encoding='utf-8') as file:
-    with open(f'data/{dataset}/test_small.jsonl', 'r', encoding='utf-8') as file: #例子路径data/CLUTRR/test_small.jsonl
+    try:
+        data_path = resolve_data_path(dataset_key, data_path)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2)
+
+    with open(data_path, 'r', encoding='utf-8') as file:
         # Read all lines from the file
         lines = file.readlines() #每一行就是一个 JSON 对象。 把所有样本行读进内存（lines 列表）
 
@@ -133,9 +139,10 @@ if __name__ == "__main__":  #入口判断
     parser = ArgumentParser(description="Baseline script with dataset and start index arguments")#创建命令行参数解析器
     parser.add_argument("--dataset", help="Dataset name") #--dataset：决定跑哪个数据集目录
     parser.add_argument("--start_index", type=int, default=0, help="Start index to begin processing")#--start_index：支持从某个样本编号开始，方便续跑。
+    parser.add_argument("--data_path", default=None)
     args = parser.parse_args()
 
-    baseline(args.dataset, args.start_index)
+    baseline(args.dataset, args.start_index, data_path=args.data_path)
 
 
-# python run.py --dataset CLUTRR --start_index 0
+baseline(args.dataset, args.start_index, data_path=args.data_path)
