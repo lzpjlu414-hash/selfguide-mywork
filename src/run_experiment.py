@@ -1,12 +1,16 @@
 import sys
+from pathlib import Path
 from argparse import ArgumentParser
 
 try:
     from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
     from src.abs.self_guide_myself import self_guide_run
+    from src.summarize_logs import summarize_logs
 except ImportError:  # pragma: no cover - fallback for direct script execution
     from utils.dataset_io import resolve_data_path, validate_openai_api_key
     from abs.self_guide_myself import self_guide_run
+    from scripts.summarize_logs import summarize_logs
+
 
 
 def main() -> None:
@@ -30,6 +34,7 @@ def main() -> None:
     parser.add_argument("--prolog_max_result", type=int, default=20)
     parser.add_argument("--tmp_dir", default=None, help="root dir for Prolog temp files")
     parser.add_argument("--keep_tmp", action="store_true", help="keep Prolog temp files")
+    parser.add_argument("--summarize", action="store_true", help="summarize logs after run")
 
     args = parser.parse_args()
 
@@ -57,6 +62,17 @@ def main() -> None:
         tmp_dir=args.tmp_dir,
         keep_tmp=args.keep_tmp,
     )
+    if args.summarize:
+        log_dir = Path(args.log_dir) if args.log_dir else Path(f"log/{args.method}/{args.dataset}")
+        summary = summarize_logs(log_dir)
+        print(f"N={summary['N']}")
+        print(f"accuracy={summary['accuracy']:.4f}")
+        print(f"route_distribution={summary['route_distribution']}")
+        print(f"prolog_enabled={summary['prolog_enabled']}")
+        print(f"proof_nonempty={summary['proof_nonempty']}")
+        print(f"correctness_missing={summary['correctness_missing']}")
+        print(f"prolog_missing={summary['prolog_missing']}")
+        print(f"prolog_swipl_ok={summary['prolog_swipl_ok']}")
 
 
 if __name__ == "__main__":
