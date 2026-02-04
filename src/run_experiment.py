@@ -1,11 +1,17 @@
+import os
+import sys
 from argparse import ArgumentParser
 
 from src.abs.self_guide_myself import self_guide_run
 
 
 def main() -> None:
-    parser = ArgumentParser(description="Run GSM8K experiments (LLM-only / Prolog).")
-    parser.add_argument("--dataset", default="gsm8k", choices=["gsm8k"])
+    parser = ArgumentParser(description="Run Self-Guide experiments across datasets.")
+    parser.add_argument(
+        "--dataset",
+        default="gsm8k",
+        choices=["gsm8k", "prontoqa", "proofwriter", "mmlu", "sqa", "date", "clutrr"],
+    )
     parser.add_argument("--method", required=True, choices=["cot_selfguide", "sd_selfguide"])
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--num_samples", type=int, default=1)
@@ -19,7 +25,14 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    data_path = args.data_path or "log/gsm8k.jsonl"
+    data_path = args.data_path or f"log/{args.dataset}.jsonl"
+    if not os.path.exists(data_path):
+        print(
+            f"Dataset file not found: {data_path}. "
+            "Provide --data_path to a JSON/JSONL file for this dataset.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     self_guide_run(
         dataset=args.dataset,

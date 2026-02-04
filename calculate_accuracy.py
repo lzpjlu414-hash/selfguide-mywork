@@ -1,3 +1,4 @@
+# LEGACY: Standalone analysis script; not a primary pipeline entry point.
 import os
 import json
 import re

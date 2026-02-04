@@ -1,3 +1,4 @@
+# LEGACY: Local API connectivity test; not a primary pipeline entry point.
 import os
 from openai import OpenAI
 

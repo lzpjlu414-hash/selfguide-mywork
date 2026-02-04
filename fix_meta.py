@@ -1,3 +1,4 @@
+# LEGACY: One-off encoding fix utility; not a primary pipeline entry point.
 from pathlib import Path
 
 p = Path(r"src\caring\tasks\gsm8k\meta_interpreter.pl")

@@ -14,11 +14,11 @@ from argparse import ArgumentParser
 from pathlib import Path
 import subprocess
 
-from src.utils.dataset_io import load_jsonl
+from src.utils.dataset_io import load_dataset
 from src.utils.scoring import (
     extract_gsm8k_final_number as extract_gsm8k_number,
     postprocess_pred as postprocess_gsm8k_pred,
-    judge_correctness as judge_gsm8k_correctness,
+    judge_correctness as judge_dataset_correctness,
 )
 
 # 解析 Guideline 里的 task_type（Yes/No/Partial）
@@ -352,10 +352,11 @@ def build_question_block(dataset_key: str, data: dict) -> Tuple[str, str]:
       format_rule: strict output rule for Round2
     """
     question = data.get("question", "")
+    context = data.get("context", "")
 
     if dataset_key == "mmlu":
         choice = data["choices"]  # {"A": "...", "B": "...", ...}
-        options = "\n".join([f"{k}: {v}" for k, v in choice.items()])
+        options = "\n".join([f"{k}: {v}" for k, v in sorted(choice.items())])
         qblock = f"Question: {question}\n{options}"
         format_rule = "Output ONLY one letter: A/B/C/D. No other text."
         return qblock, format_rule
@@ -368,6 +369,14 @@ def build_question_block(dataset_key: str, data: dict) -> Tuple[str, str]:
     if dataset_key == "date":
         qblock = f"Question: {question}"
         format_rule = "Output ONLY the date in MM/DD/YYYY format. No other text."
+        return qblock, format_rule
+
+    if dataset_key in ("prontoqa", "proofwriter"):
+        if context and question:
+            qblock = f"Context: {context}\nQuestion: {question}"
+        else:
+            qblock = question or context
+        format_rule = "Output ONLY the final answer. Do NOT add explanation."
         return qblock, format_rule
 
     # clutrr / other free text
@@ -520,28 +529,7 @@ def extract_gsm8k_final_number(s: str) -> str:
     return extract_gsm8k_number(s)
 
 def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
-    gold_s = str(gold).strip().lower()
-    pred_s = str(pred).strip()
-
-    if dataset_key == "mmlu":
-        gold_choice = gold_s[:1].upper()
-        pred_choice = extract_mmlu_choice(pred_s)
-        return "True" if pred_choice == gold_choice else "False"
-
-    if dataset_key == "sqa":
-        g = gold_s
-        first = pred_s.strip().lower().split()[0] if pred_s.strip().split() else ""
-        return "True" if first in ("yes", "no") and first == g else "False"
-
-    if dataset_key == "date":
-        gold_norm = normalize_date_mmddyyyy(gold_s) or gold_s
-        pred_norm = normalize_date_mmddyyyy(pred_s)
-        return "True" if (pred_norm is not None and pred_norm.lower() == gold_norm.lower()) else "False"
-        # ✅ 新增：gsm8k 判分只比最终数字
-    if dataset_key == "gsm8k":
-        return judge_gsm8k_correctness(gold, pred)
-
-    return "True" if gold_s in pred_s.lower() else "False"
+    return judge_dataset_correctness(dataset_key, gold, pred)
 
 
 # ======================
@@ -570,7 +558,12 @@ def self_guide_run(
     # data_path = f"log_guideline/{dataset}.jsonl"
     data_path = data_path or f"log/{dataset_key}.jsonl"
     if not os.path.exists(data_path):
-        raise FileNotFoundError(f"Dataset file not found: {data_path}")
+        print(
+            f"Dataset file not found: {data_path}. "
+            "Provide --data_path to a JSON/JSONL file for this dataset.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     log_dir = log_dir_override or f"log/{method_key}/{dataset_key}"
     os.makedirs(log_dir, exist_ok=True)
@@ -578,9 +571,13 @@ def self_guide_run(
         for log_path in glob(os.path.join(log_dir, "*.json")):
             os.remove(log_path)
 
-    samples = load_jsonl(data_path)
+    samples = load_dataset(data_path, dataset_key)
     if not samples:
-        raise ValueError(f"Dataset file is empty or invalid: {data_path}")
+        print(
+            f"Dataset file is empty or invalid after mapping: {data_path}.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     print(f"Self-Guide running: dataset={dataset_key}, method={method_key}, start_index={start_index}")
     end = min(len(samples), start_index + num_samples)
