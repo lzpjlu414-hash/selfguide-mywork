@@ -22,12 +22,23 @@ def get_client() -> OpenAI:
 
 def resolve_model(
     model: Optional[str],
-    env_key: str = "OPENAI_MODEL",
+    purpose: Optional[str] = None,
+    env_key: Optional[str] = None,
     default: str = "gpt-3.5-turbo-1106",
+    **kwargs: Any,
 ) -> str:
     if model:
         return model
-    env_value = os.getenv(env_key, "").strip()
+    _ = kwargs
+    if env_key:
+        env_value = os.getenv(env_key, "").strip()
+    elif purpose:
+        if purpose == "guide":
+            env_value = os.getenv("OPENAI_GUIDE_MODEL", "").strip()
+        else:
+            env_value = os.getenv("OPENAI_MODEL", "").strip()
+    else:
+        env_value = os.getenv("OPENAI_MODEL", "").strip()
     return env_value or default
 
 
