@@ -8,7 +8,7 @@ from openai import OpenAI
 
 DEBUG = os.getenv("LLM_DEBUG", "").lower() in ("1", "true", "yes")
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
-_CLIENTS: Dict[Tuple[str, float], OpenAI] = {}
+_CLIENTS: Dict[Tuple[str, Optional[float]], OpenAI] = {}
 
 def _resolve_base_url(base_url: Optional[str] = None) -> Optional[str]:
     env_base = (os.getenv("OPENAI_API_BASE") or "").strip()
@@ -29,14 +29,27 @@ def validate_llm_config(mock_llm: bool, base_url: Optional[str] = None) -> None:
         )
 
 
-def get_client(base_url: Optional[str] = None, timeout: float = 30.0) -> OpenAI:
+def _coerce_float(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _coerce_int(value: Optional[int]) -> Optional[int]:
+    if value is None:
+        return None
+    return int(value)
+
+
+def get_client(base_url: Optional[str] = None, timeout: Optional[float] = 30.0) -> OpenAI:
     resolved_base = _resolve_base_url(base_url) or ""
-    key = (resolved_base, float(timeout))
+    timeout_value = _coerce_float(timeout)
+    key = (resolved_base, timeout_value)
     if key not in _CLIENTS:
         _CLIENTS[key] = OpenAI(
             api_key=os.getenv("OPENAI_API_KEY", ""),
             base_url=resolved_base or None,
-            timeout=timeout,
+            timeout=timeout_value,
         )
     return _CLIENTS[key]
 
@@ -66,18 +79,42 @@ def resolve_model(
 def _chat(
     messages: List[Dict[str, Any]],
     model: str,
-    temperature: float = 0.2,
+        temperature: Optional[float] = 0.2,
+        top_p: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     max_retries: int = 3,
-    timeout: float = 30.0,
+    timeout: Optional[float] = 30.0,
     base_url: Optional[str] = None,
+    **kwargs: Any,
 ) -> str:
     last_err = None
+    request_kwargs: Dict[str, Any] = {}
+    temperature_value = _coerce_float(temperature)
+    if temperature_value is not None:
+        request_kwargs["temperature"] = temperature_value
+    top_p_value = _coerce_float(top_p)
+    if top_p_value is not None:
+        request_kwargs["top_p"] = top_p_value
+    presence_penalty_value = _coerce_float(presence_penalty)
+    if presence_penalty_value is not None:
+        request_kwargs["presence_penalty"] = presence_penalty_value
+    frequency_penalty_value = _coerce_float(frequency_penalty)
+    if frequency_penalty_value is not None:
+        request_kwargs["frequency_penalty"] = frequency_penalty_value
+    max_tokens_value = _coerce_int(max_tokens)
+    if max_tokens_value is not None:
+        request_kwargs["max_tokens"] = max_tokens_value
+    for key, value in kwargs.items():
+        if value is not None:
+            request_kwargs[key] = value
     for attempt in range(max_retries):
         try:
             resp = get_client(base_url=base_url, timeout=timeout).chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=temperature,
+                **request_kwargs,
             )
             return resp.choices[0].message.content
         except Exception as exc:  # pragma: no cover - passthrough retry
@@ -180,9 +217,9 @@ def _mock_response(
 def chat_complete(
     messages: List[Dict[str, Any]],
     model: Optional[str] = None,
-    temperature: float = 0.2,
+    temperature: Optional[float] = 0.2,
     max_retries: int = 3,
-    timeout: float = 30.0,
+    timeout: Optional[float] = 30.0,
     base_url: Optional[str] = None,
     mock_llm: bool = False,
     mock_profile: Optional[str] = None,
@@ -193,12 +230,26 @@ def chat_complete(
     if mock_llm:
         return _mock_response(messages, dataset_key, prompt_type, mock_profile)
     validate_llm_config(mock_llm=False, base_url=base_url)
-    _ = kwargs
+    top_p = kwargs.pop("top_p", None)
+    presence_penalty = kwargs.pop("presence_penalty", None)
+    frequency_penalty = kwargs.pop("frequency_penalty", None)
+    max_tokens = kwargs.pop("max_tokens", None)
+    penalties = kwargs.pop("penalties", None)
+    if isinstance(penalties, dict):
+        if presence_penalty is None:
+            presence_penalty = penalties.get("presence_penalty")
+        if frequency_penalty is None:
+            frequency_penalty = penalties.get("frequency_penalty")
     return _chat(
         messages=messages,
         model=resolve_model(model),
         temperature=temperature,
+        top_p=top_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        max_tokens=max_tokens,
         max_retries=max_retries,
         timeout=timeout,
         base_url=base_url,
+        **kwargs,
     )
