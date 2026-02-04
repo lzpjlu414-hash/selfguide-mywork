@@ -3,6 +3,7 @@ import json
 import time
 import os
 import re
+from glob import glob
 from typing import Optional, Tuple, List
 
 from openai import OpenAI
@@ -427,11 +428,11 @@ def postprocess_guideline(s: str) -> str:
 
 
 #核心：生成 guideline
-def generate_guideline_from_prompt(g_prompt: str, format_rule: str) -> str:
+def generate_guideline_from_prompt(g_prompt: str, format_rule: str, mock_llm: bool = False) -> str:
     candidates = []
     for _ in range(max(1, N_GUIDE_CANDIDATES)):
         h = [{"role": "user", "content": g_prompt}]
-        g = ai_request(h, model=GUIDE_MODEL, t=0.7)  # guideline 适当高温度
+        g = ai_request(h, model=GUIDE_MODEL, t=0.7, mock_llm=mock_llm)  # guideline 适当高温度
         candidates.append(postprocess_guideline(g))
         time.sleep(0.2)
 
@@ -443,7 +444,7 @@ def generate_guideline_from_prompt(g_prompt: str, format_rule: str) -> str:
 
     merge_p = consolidate_guidelines_prompt(candidates, format_rule)
     merge_h = [{"role": "user", "content": merge_p}]
-    merged = ai_request(merge_h, model=GUIDE_MODEL, t=0.2)
+    merged = ai_request(merge_h, model=GUIDE_MODEL, t=0.2, mock_llm=mock_llm)
     return postprocess_guideline(merged)
 
 
@@ -557,14 +558,17 @@ def self_guide_run(
     method_key = method.lower()
 
     # data_path = f"log_guideline/{dataset}.jsonl"
-    data_path = f"log/{dataset_key}.jsonl"
+    data_path = data_path or f"log/{dataset_key}.jsonl"
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"Dataset file not found: {data_path}")
 
     log_dir = log_dir_override or f"log/{method_key}/{dataset_key}"
     os.makedirs(log_dir, exist_ok=True)
+    if mock_llm:
+        for log_path in glob(os.path.join(log_dir, "*.json")):
+            os.remove(log_path)
 
-    with open(data_path, "r", encoding="utf-8") as f:
+    with open(data_path, "r", encoding="utf-8-sig") as f:
         lines = f.readlines()
 
     print(f"Self-Guide running: dataset={dataset_key}, method={method_key}, start_index={start_index}")
@@ -573,6 +577,7 @@ def self_guide_run(
             enumerate(lines[start_index:end], start=start_index),
             total=end - start_index,
     ):
+        line = line.lstrip("\ufeff")
         data = json.loads(line)
         sample_id = data.get("id", i)
         gold = data.get("answer", "")
@@ -582,7 +587,7 @@ def self_guide_run(
         ## ---------- Round 0: CoT draft (A) ----------
         cot_prompt = build_cot_draft_prompt(qblock, format_rule)
         draft_history = [{"role": "user", "content": cot_prompt}]
-        draft_raw = ai_request(draft_history, model=SOLVE_MODEL, t=0.2)
+        draft_raw = ai_request(draft_history, model=SOLVE_MODEL, t=0.2, mock_llm=mock_llm)
         time.sleep(SLEEP_SEC)
 
         # 截断草稿，避免太长（更稳、更省 token）
@@ -591,7 +596,7 @@ def self_guide_run(
 
         # ---------- Round 1: generate guideline (B) ----------
         g_prompt = build_guideline_prompt(dataset_key, qblock, format_rule)
-        guideline = generate_guideline_from_prompt(g_prompt, format_rule)
+        guideline = generate_guideline_from_prompt(g_prompt, format_rule, mock_llm=mock_llm)
         time.sleep(SLEEP_SEC)
 
         # ---------- Round 2: solve with guideline + draft (C) ----------
@@ -601,7 +606,7 @@ def self_guide_run(
 
         history = []
         add_message("user", solve_prompt, history)
-        pred_raw = ai_request(history, model=SOLVE_MODEL, t=0.2)
+        pred_raw = ai_request(history, model=SOLVE_MODEL, t=0.2, mock_llm=mock_llm)
         pred = postprocess_pred(dataset_key, pred_raw)
 
 
@@ -631,7 +636,7 @@ def self_guide_run(
                 # (1) 生成 Prolog（严格：只输出 Prolog）
                 prolog_prompt = build_prolog_gen_prompt(qblock, guideline)
                 prolog_history = [{"role": "user", "content": prolog_prompt}]
-                prolog_raw = ai_request(prolog_history, model=SOLVE_MODEL, t=0.2)
+                prolog_raw = ai_request(prolog_history, model=SOLVE_MODEL, t=0.2, mock_llm=mock_llm)
                 prolog_pack["prolog_raw"] = prolog_raw
 
                 try:
@@ -728,51 +733,47 @@ def self_guide_run(
 
 
         # ---------- save log ----------
+        # ---------- save log ----------
         log_path = os.path.join(log_dir, f"{dataset_key}_{i}.json")
+
+        payload = {
+            "id": sample_id,
+            "dataset": dataset_key,
+            "method": method_key,
+            "models": {"guide_model": GUIDE_MODEL, "solve_model": SOLVE_MODEL},
+            "format_rule": format_rule,
+            "run_config": {
+                "dataset": dataset_key,
+                "method": method_key,
+                "start_index": start_index,
+                "num_samples": num_samples,
+                "force_task_type": force_task_type,
+                "solve_model": SOLVE_MODEL,
+                "guide_model": GUIDE_MODEL,
+                "prolog_max_result": PROLOG_MAX_RESULT,
+                "prolog_enabled": prolog_pack.get("enabled", False),
+                "prolog_task_type": prolog_pack.get("task_type"),
+            },
+            "guideline": guideline,
+            "gold": gold,
+            "draft_raw": draft_raw,
+            "draft": draft,
+            "pred_raw": pred_raw,
+            "pred": pred,
+            "llm_candidate": llm_candidate,
+            "llm_candidate_norm": llm_candidate_norm,
+            "final_answer": final_answer,
+            "correctness": correctness,
+            "round1_guideline_prompt": g_prompt,
+            "round2_solve_prompt": solve_prompt,
+            "log": history,
+            "route": route,
+            "prolog": prolog_pack,
+            "route_reason": route_reason,
+        }
+
         with open(log_path, "w", encoding="utf-8") as lf:
-            json.dump(
-                {
-                    "id": sample_id,
-                    "dataset": dataset_key,
-                    "method": method_key,
-                    "models": {"guide_model": GUIDE_MODEL, "solve_model": SOLVE_MODEL},
-                    "format_rule": format_rule,
-                    "run_config": {
-                        "dataset": dataset_key,
-                        "method": method_key,
-                        "start_index": start_index,
-                        "num_samples": num_samples,
-                        "force_task_type": force_task_type,
-                        "solve_model": SOLVE_MODEL,
-                        "guide_model": GUIDE_MODEL,
-                        "prolog_max_result": PROLOG_MAX_RESULT,
-                        "prolog_enabled": prolog_pack.get("enabled", False),
-                        "prolog_task_type": prolog_pack.get("task_type"),
-                    },
-                    "guideline": guideline,
-                    "gold": gold,
-                    "draft_raw": draft_raw,
-                    "draft": draft,
-                    "pred_raw": pred_raw,
-                    "pred": pred,
-                    "llm_candidate": llm_candidate,
-                    "llm_candidate_norm": llm_candidate_norm,
-                    "final_answer": final_answer,
-                    "correctness": correctness,
-                    # 记录关键 prompt（方便复现/写论文）
-                    "round1_guideline_prompt": g_prompt,
-                    "round2_solve_prompt": solve_prompt,
-                    "log": history,
-                    "route": route,
-                    "prolog": prolog_pack,
-
-                    "route_reason": route_reason,
-
-                },
-                lf,
-                indent=2,
-                ensure_ascii=False,
-            )
+            json.dump(payload, lf, indent=2, ensure_ascii=False)
 
 
 if __name__ == "__main__":
