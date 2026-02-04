@@ -66,7 +66,10 @@ def parse_caring_swipl_answer(raw: str) -> Tuple[Optional[str], Optional[str]]:
         if k in obj and obj[k] is not None:
             v = obj[k]
             if isinstance(v, list):
-                proof = str(v[0]) if v else None
+                if not v:
+                    proof = None
+                else:
+                    proof = "\n".join(str(item) for item in v if str(item).strip())
             else:
                 proof = str(v)
             break
@@ -147,7 +150,13 @@ import subprocess
 import sys
 
 
-def run_caring_call_swipl(dataset_key: str, clauses: list, max_result: int = 20) -> dict:
+def run_caring_call_swipl(
+    dataset_key: str,
+    clauses: list,
+    max_result: int = 20,
+    meta_interpreter: str = "iter_deep_with_proof",
+    max_depth: int = 25,
+) -> dict:
     caring_root = (Path(__file__).resolve().parent.parent / "caring").resolve()
 
     name_map = {"gsm8k": "gsm8k", "prontoqa": "prontoqa", "proofwriter": "proofwriter"}
@@ -176,6 +185,8 @@ def run_caring_call_swipl(dataset_key: str, clauses: list, max_result: int = 20)
         "--mi_path", str(mi_pl),
         "--output_path", str(out_path),
         "--max_result", str(max_result),
+        "--meta_interpreter", str(meta_interpreter),
+        "--max_depth", str(max_depth),
     ]
 
     try:
@@ -245,6 +256,8 @@ N_GUIDE_CANDIDATES = int(os.getenv("N_GUIDE_CANDIDATES", "1"))
 # 可选：两轮之间 sleep，避免触发限流
 SLEEP_SEC = float(os.getenv("SLEEP_SEC", "0.5"))
 PROLOG_MAX_RESULT = 20
+PROLOG_META_INTERPRETER = "iter_deep_with_proof"
+PROLOG_MAX_DEPTH = 25
 
 def postprocess_pred(dataset_key: str, pred: str) -> str:
     pred = (pred or "").strip()
@@ -616,6 +629,8 @@ def self_guide_run(
             "enabled": False,
             "task_type": "No",
             "prolog_max_result": PROLOG_MAX_RESULT,
+            "meta_interpreter": PROLOG_META_INTERPRETER,
+            "max_depth": PROLOG_MAX_DEPTH,
         }  # 默认不启用
         llm_candidate = pred
         llm_candidate_norm = postprocess_pred(dataset_key, llm_candidate)
@@ -648,6 +663,8 @@ def self_guide_run(
                         dataset_key,
                         clauses,
                         max_result=PROLOG_MAX_RESULT,
+                        meta_interpreter=PROLOG_META_INTERPRETER,
+                        max_depth=PROLOG_MAX_DEPTH,
                     )
 
                     # ✅ 强制保证 raw 字段存在（避免你之后解析时抓不到）
@@ -657,6 +674,8 @@ def self_guide_run(
                     prolog_pack["swipl"] = swipl_out
                     prolog_pack["clauses_count"] = len(clauses)
                     prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
+                    prolog_pack["meta_interpreter"] = PROLOG_META_INTERPRETER
+                    prolog_pack["max_depth"] = PROLOG_MAX_DEPTH
 
                     # 解析 Prolog answer + proof
                     prolog_answer, prolog_proof = parse_caring_swipl_answer(swipl_out.get("raw"))
@@ -715,16 +734,22 @@ def self_guide_run(
                     prolog_pack["fallback_reason"] = route_reason
                     prolog_pack["clauses_count"] = None
                     prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
+                    prolog_pack["meta_interpreter"] = PROLOG_META_INTERPRETER
+                    prolog_pack["max_depth"] = PROLOG_MAX_DEPTH
             else:
                 route_reason = "Prolog disabled by task_type."
                 prolog_pack["fallback_reason"] = route_reason
                 prolog_pack["clauses_count"] = None
                 prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
+                prolog_pack["meta_interpreter"] = PROLOG_META_INTERPRETER
+                prolog_pack["max_depth"] = PROLOG_MAX_DEPTH
         else:
             route_reason = "Dataset not supported for Prolog."
             prolog_pack["fallback_reason"] = route_reason
             prolog_pack["clauses_count"] = None
             prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
+            prolog_pack["meta_interpreter"] = PROLOG_META_INTERPRETER
+            prolog_pack["max_depth"] = PROLOG_MAX_DEPTH
 
         add_message("assistant", final_answer, history)
         time.sleep(SLEEP_SEC)

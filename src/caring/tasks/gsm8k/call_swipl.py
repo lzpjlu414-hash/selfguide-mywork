@@ -103,6 +103,23 @@ def _read_jsonl(path: str):
     return items
 
 
+def _collect_proofs(results: list) -> list:
+    proofs = []
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        if "Proof" in r and r["Proof"] is not None:
+            proofs.append(r["Proof"])
+        elif "proof" in r and r["proof"] is not None:
+            proofs.append(r["proof"])
+        elif "proofs" in r and r["proofs"] is not None:
+            if isinstance(r["proofs"], list):
+                proofs.extend(r["proofs"])
+            else:
+                proofs.append(r["proofs"])
+    return list(dict.fromkeys(str(pr) for pr in proofs if str(pr).strip()))
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument("--assert_path", type=str, required=True)
@@ -166,13 +183,13 @@ def main():
 
     # 从 orig_query 里抓变量名：daily_profit(Profit) -> Profit
     # 从 orig_query 抽变量名作为答案 key（更稳：不依赖一元谓词）
-    output = {"answer": [""], "proofs": [""]}
+    output = {"answer": [], "proofs": []}
 
     q0 = (orig_query or "").strip().rstrip(".")
     vars_in_q = [v for v in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", q0) if v != "Proof"]
     key = vars_in_q[0] if vars_in_q else None  # 默认取第一个变量作为“答案变量”
 
-    answers, proofs = [], []
+    answers = []
     for r in results:
         if not isinstance(r, dict):
             continue
@@ -187,15 +204,14 @@ def main():
                     answers.append(r[k])
                     break
 
-        # 取 proof
-        if "Proof" in r:
-            proofs.append(r["Proof"])
+    if not key and not answers and results:
+            answers = ["True"]
 
     if answers:
         # 保序去重
         output["answer"] = list(dict.fromkeys(str(a) for a in answers))
-    if proofs:
-        output["proofs"] = list(dict.fromkeys(str(pr) for pr in proofs))
+    if args.meta_interpreter in ("with_proof", "iter_deep_with_proof"):
+        output["proofs"] = _collect_proofs(results)
     output["exec"] = exec_meta
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
