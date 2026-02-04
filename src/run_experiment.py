@@ -1,15 +1,9 @@
 import sys
-from pathlib import Path
 from argparse import ArgumentParser
+from pathlib import Path
 
-try:
-    from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
-    from src.abs.self_guide_myself import self_guide_run
-    from src.summarize_logs import summarize_logs
-except ImportError:  # pragma: no cover - fallback for direct script execution
-    from utils.dataset_io import resolve_data_path, validate_openai_api_key
-    from abs.self_guide_myself import self_guide_run
-    from scripts.summarize_logs import summarize_logs
+from src.abs.self_guide_myself import self_guide_run
+from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
 
 
 
@@ -63,6 +57,7 @@ def main() -> None:
         keep_tmp=args.keep_tmp,
     )
     if args.summarize:
+        from src.summarize_logs import summarize_logs
         log_dir = Path(args.log_dir) if args.log_dir else Path(f"log/{args.method}/{args.dataset}")
         summary = summarize_logs(log_dir)
         print(f"N={summary['N']}")
