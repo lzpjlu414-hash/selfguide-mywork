@@ -14,6 +14,12 @@ from argparse import ArgumentParser
 from pathlib import Path
 import subprocess
 
+from src.utils.dataset_io import load_jsonl
+from src.utils.scoring import (
+    extract_gsm8k_final_number as extract_gsm8k_number,
+    postprocess_pred as postprocess_gsm8k_pred,
+    judge_correctness as judge_gsm8k_correctness,
+)
 
 # 解析 Guideline 里的 task_type（Yes/No/Partial）
 # 构造 “只输出 Prolog” 的提示词（给 Round C 的 Prolog 生成用）
@@ -275,8 +281,7 @@ def postprocess_pred(dataset_key: str, pred: str) -> str:
         return d if d else pred
 
     if dataset_key == "gsm8k":
-        n = extract_gsm8k_final_number(pred)
-        return n if n else pred
+        return postprocess_gsm8k_pred(pred)
 
     # free text: 取第一行更干净
     return pred.splitlines()[0].strip() if pred else pred
@@ -512,16 +517,7 @@ def extract_mmlu_choice(s: str) -> str:
     return matches[-1].upper() if matches else ""
 
 def extract_gsm8k_final_number(s: str) -> str:
-    s = str(s or "")
-
-    # 优先抽 gold 里的 "#### 18"
-    m = re.search(r"####\s*([-+]?\d+(?:\.\d+)?)", s)
-    if m:
-        return m.group(1)
-
-    # pred 常见是 "18" 或 "18." / "18 dollars"：取最后一个数字
-    nums = re.findall(r"[-+]?\d+(?:\.\d+)?", s)
-    return nums[-1] if nums else ""
+    return extract_gsm8k_number(s)
 
 def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
     gold_s = str(gold).strip().lower()
@@ -543,9 +539,7 @@ def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
         return "True" if (pred_norm is not None and pred_norm.lower() == gold_norm.lower()) else "False"
         # ✅ 新增：gsm8k 判分只比最终数字
     if dataset_key == "gsm8k":
-        gold_num = extract_gsm8k_final_number(gold)
-        pred_num = extract_gsm8k_final_number(pred)
-        return "True" if gold_num and pred_num and gold_num == pred_num else "False"
+        return judge_gsm8k_correctness(gold, pred)
 
     return "True" if gold_s in pred_s.lower() else "False"
 
@@ -562,6 +556,9 @@ def self_guide_run(
     data_path: Optional[str] = None,
     log_dir_override: Optional[str] = None,
     mock_llm: bool = False,
+    meta_interpreter: str = PROLOG_META_INTERPRETER,
+    max_depth: int = PROLOG_MAX_DEPTH,
+    prolog_max_result: int = PROLOG_MAX_RESULT,
 ):
     if (not mock_llm) and (not os.getenv("OPENAI_API_KEY", "")):
        raise ValueError("OPENAI_API_KEY is empty. Please set env OPENAI_API_KEY.")
@@ -581,17 +578,17 @@ def self_guide_run(
         for log_path in glob(os.path.join(log_dir, "*.json")):
             os.remove(log_path)
 
-    with open(data_path, "r", encoding="utf-8-sig") as f:
-        lines = f.readlines()
+    samples = load_jsonl(data_path)
+    if not samples:
+        raise ValueError(f"Dataset file is empty or invalid: {data_path}")
 
     print(f"Self-Guide running: dataset={dataset_key}, method={method_key}, start_index={start_index}")
-    end = min(len(lines), start_index + num_samples)
+    end = min(len(samples), start_index + num_samples)
     for i, line in tqdm(
-            enumerate(lines[start_index:end], start=start_index),
+            enumerate(samples[start_index:end], start=start_index),
             total=end - start_index,
     ):
-        line = line.lstrip("\ufeff")
-        data = json.loads(line)
+        data = line
         sample_id = data.get("id", i)
         gold = data.get("answer", "")
 
@@ -628,9 +625,9 @@ def self_guide_run(
         prolog_pack = {
             "enabled": False,
             "task_type": "No",
-            "prolog_max_result": PROLOG_MAX_RESULT,
-            "meta_interpreter": PROLOG_META_INTERPRETER,
-            "max_depth": PROLOG_MAX_DEPTH,
+            "prolog_max_result": prolog_max_result,
+            "meta_interpreter": meta_interpreter,
+            "max_depth": max_depth,
         }  # 默认不启用
         llm_candidate = pred
         llm_candidate_norm = postprocess_pred(dataset_key, llm_candidate)
@@ -662,9 +659,9 @@ def self_guide_run(
                     swipl_out = run_caring_call_swipl(
                         dataset_key,
                         clauses,
-                        max_result=PROLOG_MAX_RESULT,
-                        meta_interpreter=PROLOG_META_INTERPRETER,
-                        max_depth=PROLOG_MAX_DEPTH,
+                        max_result=prolog_max_result,
+                        meta_interpreter=meta_interpreter,
+                        max_depth=max_depth,
                     )
 
                     # ✅ 强制保证 raw 字段存在（避免你之后解析时抓不到）
@@ -673,9 +670,9 @@ def self_guide_run(
 
                     prolog_pack["swipl"] = swipl_out
                     prolog_pack["clauses_count"] = len(clauses)
-                    prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
-                    prolog_pack["meta_interpreter"] = PROLOG_META_INTERPRETER
-                    prolog_pack["max_depth"] = PROLOG_MAX_DEPTH
+                    prolog_pack["prolog_max_result"] = prolog_max_result
+                    prolog_pack["meta_interpreter"] = meta_interpreter
+                    prolog_pack["max_depth"] = max_depth
 
                     # 解析 Prolog answer + proof
                     prolog_answer, prolog_proof = parse_caring_swipl_answer(swipl_out.get("raw"))
@@ -683,7 +680,23 @@ def self_guide_run(
                     prolog_pack["prolog_answer_norm"] = (
                         postprocess_pred(dataset_key, prolog_answer) if prolog_answer else None
                     )
+                    proof_list = []
+                    raw_obj = None
+                    try:
+                        raw_obj = json.loads(swipl_out.get("raw", "") or "")
+                    except Exception:
+                        raw_obj = None
+                    if isinstance(raw_obj, dict) and isinstance(raw_obj.get("proofs"), list):
+                        proof_list = [str(p) for p in raw_obj.get("proofs") if str(p).strip()]
+                    prolog_pack["proofs"] = proof_list
                     prolog_pack["proof"] = prolog_proof
+
+                    if meta_interpreter in ("with_proof", "iter_deep_with_proof") and swipl_out.get("ok"):
+                        if not prolog_pack["proof"]:
+                            if proof_list:
+                                prolog_pack["proof"] = "\n".join(proof_list)
+                            else:
+                                prolog_pack["proof"] = "NO_PROOF_RETURNED"
 
                     if swipl_out.get("ok") and prolog_answer:
                         prolog_answer_norm = prolog_pack["prolog_answer_norm"]
@@ -733,23 +746,23 @@ def self_guide_run(
                     route_reason = f"Prolog parse/execute exception: {e}"
                     prolog_pack["fallback_reason"] = route_reason
                     prolog_pack["clauses_count"] = None
-                    prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
-                    prolog_pack["meta_interpreter"] = PROLOG_META_INTERPRETER
-                    prolog_pack["max_depth"] = PROLOG_MAX_DEPTH
+                    prolog_pack["prolog_max_result"] = prolog_max_result
+                    prolog_pack["meta_interpreter"] = meta_interpreter
+                    prolog_pack["max_depth"] = max_depth
             else:
                 route_reason = "Prolog disabled by task_type."
                 prolog_pack["fallback_reason"] = route_reason
                 prolog_pack["clauses_count"] = None
-                prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
-                prolog_pack["meta_interpreter"] = PROLOG_META_INTERPRETER
-                prolog_pack["max_depth"] = PROLOG_MAX_DEPTH
+                prolog_pack["prolog_max_result"] = prolog_max_result
+                prolog_pack["meta_interpreter"] = meta_interpreter
+                prolog_pack["max_depth"] = max_depth
         else:
             route_reason = "Dataset not supported for Prolog."
             prolog_pack["fallback_reason"] = route_reason
             prolog_pack["clauses_count"] = None
-            prolog_pack["prolog_max_result"] = PROLOG_MAX_RESULT
-            prolog_pack["meta_interpreter"] = PROLOG_META_INTERPRETER
-            prolog_pack["max_depth"] = PROLOG_MAX_DEPTH
+            prolog_pack["prolog_max_result"] = prolog_max_result
+            prolog_pack["meta_interpreter"] = meta_interpreter
+            prolog_pack["max_depth"] = max_depth
 
         add_message("assistant", final_answer, history)
         time.sleep(SLEEP_SEC)
@@ -775,9 +788,11 @@ def self_guide_run(
                 "force_task_type": force_task_type,
                 "solve_model": SOLVE_MODEL,
                 "guide_model": GUIDE_MODEL,
-                "prolog_max_result": PROLOG_MAX_RESULT,
+                "prolog_max_result": prolog_max_result,
                 "prolog_enabled": prolog_pack.get("enabled", False),
                 "prolog_task_type": prolog_pack.get("task_type"),
+                "meta_interpreter": meta_interpreter,
+                "max_depth": max_depth,
             },
             "guideline": guideline,
             "gold": gold,
@@ -815,6 +830,9 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", default=None, help="override dataset jsonl path")
     parser.add_argument("--log_dir", default=None, help="override log directory")
     parser.add_argument("--mock_llm", action="store_true", help="use deterministic mock outputs (no API call)")
+    parser.add_argument("--meta_interpreter", default=PROLOG_META_INTERPRETER)
+    parser.add_argument("--max_depth", type=int, default=PROLOG_MAX_DEPTH)
+    parser.add_argument("--prolog_max_result", type=int, default=PROLOG_MAX_RESULT)
 
     args = parser.parse_args()
 
@@ -827,4 +845,7 @@ if __name__ == "__main__":
         data_path=args.data_path,
         log_dir_override=args.log_dir,
         mock_llm=args.mock_llm,
+        meta_interpreter=args.meta_interpreter,
+        max_depth=args.max_depth,
+        prolog_max_result=args.prolog_max_result,
     )
