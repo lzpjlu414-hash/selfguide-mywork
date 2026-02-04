@@ -24,9 +24,9 @@ try:
         judge_correctness as judge_dataset_correctness,
     )
 except ImportError:  # pragma: no cover - fallback for direct script execution
-    from llm_client import chat_complete, resolve_model
-    from utils.dataset_io import load_dataset, resolve_data_path, validate_openai_api_key
-    from utils.scoring import (
+    from src.llm_client import chat_complete, resolve_model
+    from src.utils.dataset_io import load_dataset, resolve_data_path, validate_openai_api_key
+    from src.utils.scoring import (
         extract_gsm8k_final_number as extract_gsm8k_number,
         postprocess_pred as postprocess_gsm8k_pred,
         judge_correctness as judge_dataset_correctness,
@@ -345,6 +345,8 @@ def ai_request(
     timeout: Optional[float] = None,
     mock_llm: bool = False,
     mock_profile: Optional[str] = None,
+    dataset_key: Optional[str] = None,
+    prompt_type: Optional[str] = None,
 ) -> str:
     return chat_complete(
         history,
@@ -354,7 +356,22 @@ def ai_request(
         timeout=timeout,
         mock_llm=mock_llm,
         mock_profile=mock_profile,
+        dataset_key=dataset_key,
+        prompt_type=prompt_type,
     )
+
+def build_mock_swipl_output(dataset_key: str, llm_candidate_norm: str) -> dict:
+    answer = llm_candidate_norm or ("True" if dataset_key in ("prontoqa", "proofwriter") else "0")
+    raw_payload = json.dumps({"answer": answer, "proofs": ["mock_proof"]})
+    return {
+        "ok": True,
+        "error": None,
+        "raw": raw_payload,
+        "stdout": "",
+        "stderr": "",
+        "returncode": 0,
+        "cmd": "mock_swipl",
+    }
 
 
 
@@ -475,6 +492,7 @@ def postprocess_guideline(s: str) -> str:
 def generate_guideline_from_prompt(
     g_prompt: str,
     format_rule: str,
+    dataset_key: str,
     mock_llm: bool = False,
     mock_profile: Optional[str] = None,
 ) -> str:
@@ -487,6 +505,8 @@ def generate_guideline_from_prompt(
             t=0.7,
             mock_llm=mock_llm,
             mock_profile=mock_profile,
+            dataset_key=dataset_key,
+            prompt_type="guideline",
         )  # guideline 适当高温度
         candidates.append(postprocess_guideline(g))
         time.sleep(0.2)
@@ -505,6 +525,8 @@ def generate_guideline_from_prompt(
         t=0.2,
         mock_llm=mock_llm,
         mock_profile=mock_profile,
+        dataset_key=dataset_key,
+        prompt_type="guideline_merge",
     )
     return postprocess_guideline(merged)
 
@@ -579,6 +601,7 @@ def self_guide_run(
     log_dir_override: Optional[str] = None,
     mock_llm: bool = False,
     mock_profile: Optional[str] = None,
+    mock_prolog: bool = False,
     meta_interpreter: str = PROLOG_META_INTERPRETER,
     max_depth: int = PROLOG_MAX_DEPTH,
     prolog_max_result: int = PROLOG_MAX_RESULT,
@@ -633,6 +656,8 @@ def self_guide_run(
             t=0.2,
             mock_llm=mock_llm,
             mock_profile=mock_profile,
+            dataset_key=dataset_key,
+            prompt_type="draft",
         )
         time.sleep(SLEEP_SEC)
 
@@ -645,6 +670,7 @@ def self_guide_run(
         guideline = generate_guideline_from_prompt(
             g_prompt,
             format_rule,
+            dataset_key=dataset_key,
             mock_llm=mock_llm,
             mock_profile=mock_profile,
         )
@@ -663,6 +689,8 @@ def self_guide_run(
             t=0.2,
             mock_llm=mock_llm,
             mock_profile=mock_profile,
+            dataset_key=dataset_key,
+            prompt_type="solve",
         )
         pred = postprocess_pred(dataset_key, pred_raw)
 
@@ -701,6 +729,8 @@ def self_guide_run(
                     t=0.2,
                     mock_llm=mock_llm,
                     mock_profile=mock_profile,
+                    dataset_key=dataset_key,
+                    prompt_type="prolog",
                 )
                 prolog_pack["prolog_raw"] = prolog_raw
 
@@ -709,16 +739,19 @@ def self_guide_run(
                     prolog_pack["clauses"] = clauses
 
                     # (2) 执行 CaRing 的 call_swipl.py
-                    swipl_out = run_caring_call_swipl(
-                        dataset_key,
-                        clauses,
-                        max_result=prolog_max_result,
-                        meta_interpreter=meta_interpreter,
-                        max_depth=max_depth,
-                        debug=debug,
-                        keep_tmp=keep_tmp,
-                        tmp_dir=tmp_dir,
-                    )
+                    if mock_prolog:
+                        swipl_out = build_mock_swipl_output(dataset_key, llm_candidate_norm)
+                    else:
+                        swipl_out = run_caring_call_swipl(
+                            dataset_key,
+                            clauses,
+                            max_result=prolog_max_result,
+                            meta_interpreter=meta_interpreter,
+                            max_depth=max_depth,
+                            debug=debug,
+                            keep_tmp=keep_tmp,
+                            tmp_dir=tmp_dir,
+                        )
 
                     # ✅ 强制保证 raw 字段存在（避免你之后解析时抓不到）
                     if "raw" not in swipl_out:
@@ -845,6 +878,8 @@ def self_guide_run(
                 "solve_model": SOLVE_MODEL,
                 "guide_model": GUIDE_MODEL,
                 "mock_profile": mock_profile,
+                "mock_llm": mock_llm,
+                "mock_prolog": mock_prolog,
                 "prolog_max_result": prolog_max_result,
                 "prolog_enabled": prolog_pack.get("enabled", False),
                 "prolog_task_type": prolog_pack.get("task_type"),
@@ -890,6 +925,7 @@ if __name__ == "__main__":
     parser.add_argument("--log_dir", default=None, help="override log directory")
     parser.add_argument("--mock_llm", action="store_true", help="use deterministic mock outputs (no API call)")
     parser.add_argument("--mock_profile", default=None, help="mock profile name for mock_llm")
+    parser.add_argument("--mock_prolog", action="store_true", help="mock Prolog execution (no SWI-Prolog call)")
     parser.add_argument("--meta_interpreter", default=PROLOG_META_INTERPRETER)
     parser.add_argument("--max_depth", type=int, default=PROLOG_MAX_DEPTH)
     parser.add_argument("--prolog_max_result", type=int, default=PROLOG_MAX_RESULT)
@@ -909,6 +945,7 @@ if __name__ == "__main__":
         log_dir_override=args.log_dir,
         mock_llm=args.mock_llm,
         mock_profile=args.mock_profile,
+        mock_prolog=args.mock_prolog,
         meta_interpreter=args.meta_interpreter,
         max_depth=args.max_depth,
         prolog_max_result=args.prolog_max_result,

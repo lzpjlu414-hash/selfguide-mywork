@@ -71,14 +71,11 @@ def resolve_data_path(dataset_key: str, data_path: Optional[str] = None, base_di
 
 
 def validate_openai_api_key(mock_llm: bool) -> None:
-    if mock_llm:
-        return
-    if os.getenv("OPENAI_API_KEY", "").strip():
-        return
-    raise ValueError(
-        "OPENAI_API_KEY is empty. "
-        "In PowerShell, set it with: $env:OPENAI_API_KEY='your-key'."
-    )
+    try:
+        from src.llm_client import validate_llm_config
+    except ImportError:  # pragma: no cover - fallback for script execution
+        from src.llm_client import validate_llm_config
+    validate_llm_config(mock_llm=mock_llm)
 
 def _first_present(data: dict, keys: Iterable[str]) -> Optional[Any]:
     for key in keys:

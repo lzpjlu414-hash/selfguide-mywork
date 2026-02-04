@@ -22,6 +22,8 @@ def main() -> None:
     parser.add_argument("--data_path", default=None)
     parser.add_argument("--log_dir", default=None)
     parser.add_argument("--mock_llm", action="store_true")
+    parser.add_argument("--mock_profile", default=None)
+    parser.add_argument("--mock_prolog", action="store_true")
     parser.add_argument("--force_task_type", choices=("Yes", "No", "Partial"), default=None)
     parser.add_argument("--meta_interpreter", default="iter_deep_with_proof")
     parser.add_argument("--max_depth", type=int, default=25)
@@ -47,6 +49,8 @@ def main() -> None:
         data_path=data_path,
         log_dir_override=args.log_dir,
         mock_llm=args.mock_llm,
+        mock_profile=args.mock_profile,
+        mock_prolog=args.mock_prolog,
         meta_interpreter=args.meta_interpreter,
         max_depth=args.max_depth,
         prolog_max_result=args.prolog_max_result,

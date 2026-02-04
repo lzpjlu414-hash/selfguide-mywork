@@ -5,10 +5,10 @@ import os
 import sys
 from argparse import ArgumentParser
 import re #正则：主要用于 MMLU 的 A/B/C/D 抽取：re.search(r"\b([a-d])\b", pred_s)
-from src.llm_client import chat
+from src.llm_client import chat_complete, resolve_model
 from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
 
-MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-1106")
+MODEL = resolve_model(None, purpose="solve")
 
 def add_message(role, content, history):
     history.append({"role": role, "content": content})
@@ -33,8 +33,8 @@ def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
     return "True" if gold_s in pred_s else "False"
 
 
-def baseline(dataset, method, start_index=0, data_path=None):
-    validate_openai_api_key(mock_llm=False)
+def baseline(dataset, method, start_index=0, data_path=None, mock_llm=False, mock_profile=None):
+    validate_openai_api_key(mock_llm=mock_llm)
     print(f"Running baseline for dataset: {dataset}")
 
     dataset_key = dataset.lower()
@@ -119,7 +119,15 @@ def baseline(dataset, method, start_index=0, data_path=None):
 
         # ---------- 第一轮请求 ----------
         history0 = [{"role": "user", "content": prompt0}]
-        output0 = chat(history0, model=MODEL, temperature=0.2)
+        output0 = chat_complete(
+            history0,
+            model=MODEL,
+            temperature=0.2,
+            mock_llm=mock_llm,
+            mock_profile=mock_profile,
+            dataset_key=dataset_key,
+            prompt_type="debate_round1",
+        )
         history0.append({"role": "assistant", "content": output0})
         time.sleep(1)
 
@@ -160,7 +168,15 @@ Answer: """
 
         # ---------- 第二轮请求 ----------
         history1 = [{"role": "user", "content": prompt1}]
-        output = chat(history1, model=MODEL, temperature=0.2)
+        output = chat_complete(
+            history1,
+            model=MODEL,
+            temperature=0.2,
+            mock_llm=mock_llm,
+            mock_profile=mock_profile,
+            dataset_key=dataset_key,
+            prompt_type="debate_round2",
+        )
         history1.append({"role": "assistant", "content": output})
         time.sleep(1)
 
@@ -187,6 +203,9 @@ if __name__ == "__main__":
     parser.add_argument("--start_index", type=int, default=0, help="Start index to begin processing")
     parser.add_argument("--method", help="sd_debate or cot_debate")
     parser.add_argument("--data_path", default=None)
+    parser.add_argument("--mock_llm", action="store_true")
+    parser.add_argument("--mock_profile", default=None)
     args = parser.parse_args()
 
-    baseline(args.dataset, args.method, args.start_index, data_path=args.data_path)
+    parser.add_argument("--mock_llm", action="store_true")
+    parser.add_argument("--mock_profile", default=None)

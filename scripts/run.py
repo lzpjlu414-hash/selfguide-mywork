@@ -9,7 +9,7 @@ import numpy as np
 from tqdm import tqdm
 from argparse import ArgumentParser
 
-from src.llm_client import chat
+from src.llm_client import chat_complete
 from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
 
 #MODEL = "gpt-3.5-turbo-1106"
@@ -24,13 +24,21 @@ def extract_answer(text: str) -> str:
 def add_message(role, content, history):
     history.append({"role": role, "content": content})#往对话历史里追加消息
 
-def ai_request(history, t=0.2):  # 发请求的函数：ai_request
+def ai_request(history, dataset_key, prompt_type, t=0.2, mock_llm=False, mock_profile=None):  # 发请求的函数：ai_request
     print(f"[DEBUG] 进入ai_request，历史长度: {len(history)}")
-    return chat(history, model=MODEL, temperature=t)
+    return chat_complete(
+        history,
+        model=MODEL,
+        temperature=t,
+        mock_llm=mock_llm,
+        mock_profile=mock_profile,
+        dataset_key=dataset_key,
+        prompt_type=prompt_type,
+    )
 
-
-def baseline(dataset, start_index=0, data_path=None):  # 主流程函数：baseline(dataset, start_index=0)
-    validate_openai_api_key(mock_llm=False)
+def baseline(dataset, start_index=0, data_path=None, mock_llm=False,
+                 mock_profile=None):  # 主流程函数：baseline(dataset, start_index=0)
+    validate_openai_api_key(mock_llm=mock_llm)
     print(f"[DEBUG] 进入baseline函数，数据集: {dataset}")  # baseline 函数是否进入
     print(f"Running baseline for dataset: {dataset}")  # 当前正在跑哪个数据集
     dataset_key = dataset.lower()
@@ -70,7 +78,13 @@ Please note that your role is to guide them step by step through the problem, so
 """
             teacher_history = [] #老师的对话上下文（这里只有一轮）
             add_message('user', prompt0, teacher_history)#把 prompt 作为 user 消息塞进去
-            teacher_output = ai_request(teacher_history)#调模型生成老师回复 teacher_output
+            teacher_output = ai_request(
+                teacher_history,
+                dataset_key=dataset_key,
+                prompt_type="baseline_teacher",
+                mock_llm=mock_llm,
+                mock_profile=mock_profile,
+            )  # 调模型生成老师回复 teacher_output
             add_message('assistant', teacher_output, teacher_history)#把老师回复也塞回 history（形成完整对话记录）
             time.sleep(1)#暂停 1 秒防止请求过快
 
@@ -86,7 +100,13 @@ Answer:
 
             student_history = []#初始化学生的对话历史
             add_message('user', student1, student_history)#把学生 prompt 当成 user 消息加入 history
-            student_output1 = ai_request(student_history)#向模型发送请求，得到学生第一次回答
+            student_output1 = ai_request(
+                student_history,
+                dataset_key=dataset_key,
+                prompt_type="baseline_student_round1",
+                mock_llm=mock_llm,
+                mock_profile=mock_profile,
+            )  # 向模型发送请求，得到学生第一次回答
             add_message('assistant', student_output1, student_history)#把学生的回答也存进历史
             time.sleep(1)#暂停 1 秒（节流）
             pred = extract_answer(student_output1).lower()
@@ -110,7 +130,13 @@ inference process:
 Answer: 
 """
             add_message('user', student2, student_history)#把这个 prompt 追加到 同一个 student_history（所以模型能看到自己第一轮回答过什么）。
-            student_output2 = ai_request(student_history)#再请求一次模型输出 student_output2（希望它修正之前的推理并给更正确的答案）。
+            student_output2 = ai_request(
+                student_history,
+                dataset_key=dataset_key,
+                prompt_type="baseline_student_round2",
+                mock_llm=mock_llm,
+                mock_profile=mock_profile,
+            )  # 再请求一次模型输出 student_output2（希望它修正之前的推理并给更正确的答案）。
             add_message('assistant', student_output2, student_history)
             #guide_correctness = 'True' if any(answer.lower() in student_output2.lower() for answer in answers) else 'False'
             pred = extract_answer(student_output2).lower()
@@ -140,9 +166,17 @@ if __name__ == "__main__":  #入口判断
     parser.add_argument("--dataset", help="Dataset name") #--dataset：决定跑哪个数据集目录
     parser.add_argument("--start_index", type=int, default=0, help="Start index to begin processing")#--start_index：支持从某个样本编号开始，方便续跑。
     parser.add_argument("--data_path", default=None)
+    parser.add_argument("--mock_llm", action="store_true")
+    parser.add_argument("--mock_profile", default=None)
     args = parser.parse_args()
 
-    baseline(args.dataset, args.start_index, data_path=args.data_path)
+    baseline(
+        args.dataset,
+        args.start_index,
+        data_path=args.data_path,
+        mock_llm=args.mock_llm,
+        mock_profile=args.mock_profile,
+    )
 
 
 baseline(args.dataset, args.start_index, data_path=args.data_path)

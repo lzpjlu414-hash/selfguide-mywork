@@ -14,18 +14,35 @@ from argparse import ArgumentParser
 # 推荐用环境变量：OPENAI_API_KEY / OPENAI_API_BASE
 
 
-MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-1106")
+from src.llm_client import chat_complete, resolve_model
+from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
+
+MODEL = resolve_model(None, purpose="solve")
 
 
 def add_message(role: str, content: str, history: list):
     history.append({"role": role, "content": content})
 
 
-from src.llm_client import chat
-from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
-
-def ai_request(history: list, t: float = 0.2, max_retries: int = 3) -> str:
-    return chat(messages=history, model=MODEL, temperature=t, max_retries=max_retries)
+def ai_request(
+    history: list,
+    dataset_key: str,
+    prompt_type: str,
+    t: float = 0.2,
+    max_retries: int = 3,
+    mock_llm: bool = False,
+    mock_profile: Optional[str] = None,
+) -> str:
+    return chat_complete(
+        messages=history,
+        model=MODEL,
+        temperature=t,
+        max_retries=max_retries,
+        mock_llm=mock_llm,
+        mock_profile=mock_profile,
+        dataset_key=dataset_key,
+        prompt_type=prompt_type,
+    )
 
 
 
@@ -187,8 +204,15 @@ def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
 
 
 # ============= Main loop =============
-def baseline(dataset: str, method: str, start_index: int = 0, data_path: Optional[str] = None):
-    validate_openai_api_key(mock_llm=False)
+def baseline(
+    dataset: str,
+    method: str,
+    start_index: int = 0,
+    data_path: Optional[str] = None,
+    mock_llm: bool = False,
+    mock_profile: Optional[str] = None,
+):
+    validate_openai_api_key(mock_llm=mock_llm)
 
     dataset_key = dataset.lower()
     method_key = method.lower()
@@ -198,8 +222,11 @@ def baseline(dataset: str, method: str, start_index: int = 0, data_path: Optiona
     log_dir = f"log/{method_key}/{dataset_key}"
     os.makedirs(log_dir, exist_ok=True)
 
-    def baseline(dataset: str, method: str, start_index: int = 0, data_path: Optional[str] = None):
-        validate_openai_api_key(mock_llm=False)
+    try:
+        data_path = resolve_data_path(dataset_key, data_path)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(2)
     with open(data_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
@@ -216,14 +243,26 @@ def baseline(dataset: str, method: str, start_index: int = 0, data_path: Optiona
 
         history = []
         add_message("user", prompt0, history)
-        output0 = ai_request(history)
+        output0 = ai_request(
+            history,
+            dataset_key=dataset_key,
+            prompt_type="verify_round1",
+            mock_llm=mock_llm,
+            mock_profile=mock_profile,
+        )
         add_message("assistant", output0, history)
         time.sleep(1)
 
         # ---------- round 2 (verify) ----------
         prompt1 = build_prompt1(dataset_key, data, output0, guideline, extra)
         add_message("user", prompt1, history)
-        output = ai_request(history)
+        output = ai_request(
+            history,
+            dataset_key=dataset_key,
+            prompt_type="verify_round2",
+            mock_llm=mock_llm,
+            mock_profile=mock_profile,
+        )
         add_message("assistant", output, history)
         time.sleep(1)
 
@@ -259,6 +298,15 @@ if __name__ == "__main__":
     parser.add_argument("--method", required=True, help="sd_verify or cot_verify")
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--data_path", default=None)
+    parser.add_argument("--mock_llm", action="store_true")
+    parser.add_argument("--mock_profile", default=None)
     args = parser.parse_args()
 
-    baseline(args.dataset, args.method, args.start_index, data_path=args.data_path)
+    baseline(
+        args.dataset,
+        args.method,
+        args.start_index,
+        data_path=args.data_path,
+        mock_llm=args.mock_llm,
+        mock_profile=args.mock_profile,
+    )

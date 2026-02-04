@@ -8,7 +8,8 @@ from argparse import ArgumentParser
 import re
 import ast
 
-from src.llm_client import chat
+from src.llm_client import chat_complete
+from src.utils.dataset_io import validate_openai_api_key
 
 
 
@@ -18,13 +19,24 @@ def add_message(role, content, history):
 
 MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-1106")
 
-def ai_request(history, t=0.2, max_retries=3):
-    return chat(messages=history, model=MODEL, temperature=t, max_retries=max_retries)
 
 
-def baseline(dataset, start_index=0):
-    if not os.getenv("OPENAI_API_KEY", ""):
-        raise ValueError("OPENAI_API_KEY is empty. Please set env OPENAI_API_KEY.")
+
+def ai_request(history, dataset_key, prompt_type, t=0.2, max_retries=3, mock_llm=False, mock_profile=None):
+    return chat_complete(
+        messages=history,
+        model=MODEL,
+        temperature=t,
+        max_retries=max_retries,
+        mock_llm=mock_llm,
+        mock_profile=mock_profile,
+        dataset_key=dataset_key,
+        prompt_type=prompt_type,
+    )
+
+
+def baseline(dataset, start_index=0, mock_llm=False, mock_profile=None):
+    validate_openai_api_key(mock_llm=mock_llm)
     print(f"Running baseline for dataset: {dataset}")
     # Create directory for logs if it doesn't exist
     log_dir = f'log/baseline/{dataset}'
@@ -51,7 +63,13 @@ def baseline(dataset, start_index=0):
             history = []
             add_message('user', prompt0, history)
             print("DEBUG: before first request")
-            output = ai_request(history)
+            output = ai_request(
+                history,
+                dataset_key=dataset,
+                prompt_type="baseline",
+                mock_llm=mock_llm,
+                mock_profile=mock_profile,
+            )
             print("DEBUG: after first request")
 
             add_message('assistant', output, history)
@@ -75,8 +93,15 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Baseline script with dataset and start index arguments")
     parser.add_argument("--dataset", help="Dataset name")
     parser.add_argument("--start_index", type=int, default=0, help="Start index to begin processing")
+    parser.add_argument("--mock_llm", action="store_true")
+    parser.add_argument("--mock_profile", default=None)
     args = parser.parse_args()
 
-    baseline(args.dataset, args.start_index)
+    baseline(
+        args.dataset,
+        args.start_index,
+        mock_llm=args.mock_llm,
+        mock_profile=args.mock_profile,
+    )
 
 
