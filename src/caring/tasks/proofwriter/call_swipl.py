@@ -160,6 +160,7 @@ def consult_prolog(
         debug=False,
         dataset_name="vanilla",
         max_result=20,
+        keep_tmp=False,
 ):
     
     """
@@ -219,6 +220,8 @@ def consult_prolog(
         "stdout_tail": (response.stdout or "")[-2000:],
         "meta_interpreter": meta_interpreter,
         "max_depth": max_depth,
+        "assert_path": tmp_clause_path,
+        "out_path": tmp_output_path,
     }
 
     results = _read_jsonl(tmp_output_file.name) if response.returncode == 0 else []
@@ -233,8 +236,9 @@ def consult_prolog(
         output["answer"] = True
     if meta_interpreter in ("with_proof", "iter_deep_with_proof"):
         output["proofs"] = _collect_proofs(results)
-    os.remove(tmp_clause_file.name)
-    os.remove(tmp_output_file.name)
+    if not (debug or keep_tmp):
+        _safe_remove(tmp_clause_file.name)
+        _safe_remove(tmp_output_file.name)
     
     # import pdb; pdb.set_trace()
     
@@ -246,6 +250,7 @@ def main():
     parser.add_argument("--output_path", type=str, required=True)
     parser.add_argument("--max_result", type=int, default=20)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--keep_tmp", action="store_true")
     parser.add_argument(
         "--meta_interpreter",
         type=str,
@@ -292,6 +297,8 @@ def main():
         "stdout_tail": (p.stdout or "")[-2000:],
         "meta_interpreter": args.meta_interpreter,
         "max_depth": args.max_depth,
+        "assert_path": args.assert_path,
+        "out_path": args.output_path,
     }
 
     results = _read_jsonl(tmp_out.name)
@@ -320,14 +327,16 @@ def main():
     if answers:
         output["answer"] = list(dict.fromkeys(str(a) for a in answers))
     if args.meta_interpreter in ("with_proof", "iter_deep_with_proof"):
-        output["proofs"] = _collect_proofs(results)
+        proofs = _collect_proofs(results)
+        output["proofs"] = proofs if proofs else ["NO_PROOF_RETURNED"]
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
     with open(args.output_path, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False)
 
-    _safe_remove(tmp_assert.name)
-    _safe_remove(tmp_out.name)
+    if not (args.debug or args.keep_tmp):
+        _safe_remove(tmp_assert.name)
+        _safe_remove(tmp_out.name)
 
     sys.exit(p.returncode)
 

@@ -127,6 +127,7 @@ def main():
     parser.add_argument("--output_path", type=str, required=True)
     parser.add_argument("--max_result", type=int, default=20)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--keep_tmp", action="store_true")
 
     # 可选参数：如果你后续要 proof / iter deep，就用它们
     parser.add_argument("--meta_interpreter", type=str, default="raw",
@@ -176,6 +177,8 @@ def main():
         "stdout_tail": (p.stdout or "")[-2000:],
         "meta_interpreter": args.meta_interpreter,
         "max_depth": args.max_depth,
+        "assert_path": args.assert_path,
+        "out_path": args.output_path,
     }
 
 
@@ -211,7 +214,8 @@ def main():
         # 保序去重
         output["answer"] = list(dict.fromkeys(str(a) for a in answers))
     if args.meta_interpreter in ("with_proof", "iter_deep_with_proof"):
-        output["proofs"] = _collect_proofs(results)
+        proofs = _collect_proofs(results)
+        output["proofs"] = proofs if proofs else ["NO_PROOF_RETURNED"]
     output["exec"] = exec_meta
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
@@ -219,8 +223,9 @@ def main():
         json.dump(output, f, ensure_ascii=False)
 
     # 清理临时文件（debug 时也清理，避免你目录堆垃圾；要保留就自己注释掉）
-    _safe_remove(tmp_assert.name)
-    _safe_remove(tmp_out.name)
+    if not (args.debug or args.keep_tmp):
+        _safe_remove(tmp_assert.name)
+        _safe_remove(tmp_out.name)
 
     # 让上层能感知失败：individual_prologging 非 0 就非 0
     sys.exit(p.returncode)

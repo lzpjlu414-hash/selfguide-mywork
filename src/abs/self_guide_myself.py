@@ -4,10 +4,10 @@ import time
 import os
 import re
 import sys
+import uuid
 from glob import glob
 from typing import Optional, Tuple, List
 
-from openai import OpenAI
 
 from tqdm import tqdm
 from argparse import ArgumentParser
@@ -19,6 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from src.llm_client import chat_complete, resolve_model
 from src.utils.dataset_io import load_dataset, resolve_data_path, validate_openai_api_key
 from src.utils.scoring import (
     extract_gsm8k_final_number as extract_gsm8k_number,
@@ -155,17 +156,14 @@ def extract_prolog_clauses(code: str) -> list:
 
     return clauses
 
-
-
-import subprocess
-
-
 def run_caring_call_swipl(
     dataset_key: str,
     clauses: list,
     max_result: int = 20,
     meta_interpreter: str = "iter_deep_with_proof",
     max_depth: int = 25,
+    debug: bool = False,
+    keep_tmp: bool = False,
 ) -> dict:
     caring_root = (Path(__file__).resolve().parent.parent / "caring").resolve()
 
@@ -184,8 +182,9 @@ def run_caring_call_swipl(
     tmp_dir = (Path(os.getcwd()) / "tmp_prolog").resolve()
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    assert_path = tmp_dir / f"{dataset_key}_assert.pl"
-    out_path    = tmp_dir / f"{dataset_key}_out.json"
+    unique_id = f"{dataset_key}_{os.getpid()}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    assert_path = tmp_dir / f"{unique_id}_assert.pl"
+    out_path = tmp_dir / f"{unique_id}_out.json"
 
     assert_path.write_text("\n".join(clauses) + "\n", encoding="utf-8")
 
@@ -198,11 +197,15 @@ def run_caring_call_swipl(
         "--meta_interpreter", str(meta_interpreter),
         "--max_depth", str(max_depth),
     ]
+    if debug:
+        cmd.append("--debug")
+    if keep_tmp:
+        cmd.append("--keep_tmp")
 
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except subprocess.TimeoutExpired as e:
-        return {
+        result = {
             "ok": False,
             "error": "call_swipl timeout",
             "raw": "",
@@ -211,7 +214,19 @@ def run_caring_call_swipl(
             "returncode": -1,
             "cmd": " ".join(cmd),
             "out_path": str(out_path),
+            "assert_path": str(assert_path),
+            "kept_tmp": debug or keep_tmp,
         }
+        if not (debug or keep_tmp):
+            try:
+                assert_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            try:
+                out_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        return result
 
     raw = out_path.read_text(encoding="utf-8").strip() if out_path.exists() else ""
 
@@ -226,7 +241,7 @@ def run_caring_call_swipl(
     else:
         err = None
 
-    return {
+    result = {
         "ok": ok,
         "error": err,
         "raw": raw,
@@ -235,30 +250,26 @@ def run_caring_call_swipl(
         "returncode": p.returncode,
         "cmd": " ".join(cmd),
         "out_path": str(out_path),
+        "assert_path": str(assert_path),
+        "kept_tmp": debug or keep_tmp,
     }
+    if not (debug or keep_tmp):
+        try:
+            assert_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            out_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return result
 
 
 
 
 
-# ======================
-# OpenAI config
-# ======================
-_CLIENT = None
-
-
-def get_client() -> OpenAI:
-    global _CLIENT
-    if _CLIENT is None:
-        _CLIENT = OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY", ""),
-            base_url=os.getenv("OPENAI_API_BASE", None) or None,
-        )
-    return _CLIENT
-
-
-SOLVE_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-1106")
-GUIDE_MODEL = os.getenv("OPENAI_GUIDE_MODEL", SOLVE_MODEL)
+SOLVE_MODEL = resolve_model(None, purpose="solve")
+GUIDE_MODEL = resolve_model(None, purpose="guide")
 
 # 默认每题生成 1 份 guideline；想更像“完整版本”（多采样+合并）可改成 3
 N_GUIDE_CANDIDATES = int(os.getenv("N_GUIDE_CANDIDATES", "1"))
@@ -303,45 +314,24 @@ def build_cot_draft_prompt(qblock: str, format_rule: str) -> str:
 def add_message(role: str, content: str, history: list):
     history.append({"role": role, "content": content})
 
-def _mock_ai_answer(prompt: str) -> str:
-    # guideline YAML
-    if "Output YAML with EXACT keys" in prompt and "YAML:" in prompt:
-        return (
-            "task_type: Yes\n"
-            "schema: |\n"
-            "  - predicates: ans/1\n"
-            "  - constants: use integers only\n"
-            "  - negation/unknown: not used\n"
-            "query_goal: |\n"
-            "  - return the final numeric answer as Ans\n"
-            "fallback: |\n"
-            "  - if Prolog fails, use the LLM numeric result\n"
-        )
-    # prolog generation
-    if "Prolog code (last line is the query)" in prompt:
-        return "ans(810).\nans(Ans).\n"
-    # draft / solve
-    return "810"
-
-def ai_request(history: list, model: str, t: float = 0.2, max_retries: int = 3, mock_llm: bool = False) -> str:
-    if mock_llm:
-        prompt = history[-1]["content"] if history else ""
-        return _mock_ai_answer(prompt)
-
-    """Retry wrapper for client.chat.completions.create (openai>=1.x)."""
-    last_err = None
-    for attempt in range(max_retries):
-        try:
-            resp = get_client().chat.completions.create(
-                model=model,
-                messages=history,
-                temperature=t,
-            )
-            return resp.choices[0].message.content
-        except Exception as e:
-            last_err = e
-            time.sleep(1 + attempt)
-    raise RuntimeError(f"Request failed after {max_retries} retries: {last_err}")
+def ai_request(
+    history: list,
+    model: str,
+    t: float = 0.2,
+    max_retries: int = 3,
+    timeout: Optional[float] = None,
+    mock_llm: bool = False,
+    mock_profile: Optional[str] = None,
+) -> str:
+    return chat_complete(
+        history,
+        model=model,
+        temperature=t,
+        max_retries=max_retries,
+        timeout=timeout,
+        mock_llm=mock_llm,
+        mock_profile=mock_profile,
+    )
 
 
 
@@ -459,11 +449,22 @@ def postprocess_guideline(s: str) -> str:
 
 
 #核心：生成 guideline
-def generate_guideline_from_prompt(g_prompt: str, format_rule: str, mock_llm: bool = False) -> str:
+def generate_guideline_from_prompt(
+    g_prompt: str,
+    format_rule: str,
+    mock_llm: bool = False,
+    mock_profile: Optional[str] = None,
+) -> str:
     candidates = []
     for _ in range(max(1, N_GUIDE_CANDIDATES)):
         h = [{"role": "user", "content": g_prompt}]
-        g = ai_request(h, model=GUIDE_MODEL, t=0.7, mock_llm=mock_llm)  # guideline 适当高温度
+        g = ai_request(
+            h,
+            model=GUIDE_MODEL,
+            t=0.7,
+            mock_llm=mock_llm,
+            mock_profile=mock_profile,
+        )  # guideline 适当高温度
         candidates.append(postprocess_guideline(g))
         time.sleep(0.2)
 
@@ -475,7 +476,13 @@ def generate_guideline_from_prompt(g_prompt: str, format_rule: str, mock_llm: bo
 
     merge_p = consolidate_guidelines_prompt(candidates, format_rule)
     merge_h = [{"role": "user", "content": merge_p}]
-    merged = ai_request(merge_h, model=GUIDE_MODEL, t=0.2, mock_llm=mock_llm)
+    merged = ai_request(
+        merge_h,
+        model=GUIDE_MODEL,
+        t=0.2,
+        mock_llm=mock_llm,
+        mock_profile=mock_profile,
+    )
     return postprocess_guideline(merged)
 
 
@@ -548,9 +555,12 @@ def self_guide_run(
     data_path: Optional[str] = None,
     log_dir_override: Optional[str] = None,
     mock_llm: bool = False,
+    mock_profile: Optional[str] = None,
     meta_interpreter: str = PROLOG_META_INTERPRETER,
     max_depth: int = PROLOG_MAX_DEPTH,
     prolog_max_result: int = PROLOG_MAX_RESULT,
+    debug: bool = False,
+    keep_tmp: bool = False,
 ):
     validate_openai_api_key(mock_llm)
 
@@ -595,7 +605,13 @@ def self_guide_run(
         ## ---------- Round 0: CoT draft (A) ----------
         cot_prompt = build_cot_draft_prompt(qblock, format_rule)
         draft_history = [{"role": "user", "content": cot_prompt}]
-        draft_raw = ai_request(draft_history, model=SOLVE_MODEL, t=0.2, mock_llm=mock_llm)
+        draft_raw = ai_request(
+            draft_history,
+            model=SOLVE_MODEL,
+            t=0.2,
+            mock_llm=mock_llm,
+            mock_profile=mock_profile,
+        )
         time.sleep(SLEEP_SEC)
 
         # 截断草稿，避免太长（更稳、更省 token）
@@ -604,7 +620,12 @@ def self_guide_run(
 
         # ---------- Round 1: generate guideline (B) ----------
         g_prompt = build_guideline_prompt(dataset_key, qblock, format_rule)
-        guideline = generate_guideline_from_prompt(g_prompt, format_rule, mock_llm=mock_llm)
+        guideline = generate_guideline_from_prompt(
+            g_prompt,
+            format_rule,
+            mock_llm=mock_llm,
+            mock_profile=mock_profile,
+        )
         time.sleep(SLEEP_SEC)
 
         # ---------- Round 2: solve with guideline + draft (C) ----------
@@ -614,7 +635,13 @@ def self_guide_run(
 
         history = []
         add_message("user", solve_prompt, history)
-        pred_raw = ai_request(history, model=SOLVE_MODEL, t=0.2, mock_llm=mock_llm)
+        pred_raw = ai_request(
+            history,
+            model=SOLVE_MODEL,
+            t=0.2,
+            mock_llm=mock_llm,
+            mock_profile=mock_profile,
+        )
         pred = postprocess_pred(dataset_key, pred_raw)
 
 
@@ -646,7 +673,13 @@ def self_guide_run(
                 # (1) 生成 Prolog（严格：只输出 Prolog）
                 prolog_prompt = build_prolog_gen_prompt(qblock, guideline)
                 prolog_history = [{"role": "user", "content": prolog_prompt}]
-                prolog_raw = ai_request(prolog_history, model=SOLVE_MODEL, t=0.2, mock_llm=mock_llm)
+                prolog_raw = ai_request(
+                    prolog_history,
+                    model=SOLVE_MODEL,
+                    t=0.2,
+                    mock_llm=mock_llm,
+                    mock_profile=mock_profile,
+                )
                 prolog_pack["prolog_raw"] = prolog_raw
 
                 try:
@@ -660,6 +693,8 @@ def self_guide_run(
                         max_result=prolog_max_result,
                         meta_interpreter=meta_interpreter,
                         max_depth=max_depth,
+                        debug=debug,
+                        keep_tmp=keep_tmp,
                     )
 
                     # ✅ 强制保证 raw 字段存在（避免你之后解析时抓不到）
@@ -786,11 +821,14 @@ def self_guide_run(
                 "force_task_type": force_task_type,
                 "solve_model": SOLVE_MODEL,
                 "guide_model": GUIDE_MODEL,
+                "mock_profile": mock_profile,
                 "prolog_max_result": prolog_max_result,
                 "prolog_enabled": prolog_pack.get("enabled", False),
                 "prolog_task_type": prolog_pack.get("task_type"),
                 "meta_interpreter": meta_interpreter,
                 "max_depth": max_depth,
+                "debug": debug,
+                "keep_tmp": keep_tmp,
             },
             "guideline": guideline,
             "gold": gold,
@@ -828,9 +866,12 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", default=None, help="override dataset jsonl path")
     parser.add_argument("--log_dir", default=None, help="override log directory")
     parser.add_argument("--mock_llm", action="store_true", help="use deterministic mock outputs (no API call)")
+    parser.add_argument("--mock_profile", default=None, help="mock profile name for mock_llm")
     parser.add_argument("--meta_interpreter", default=PROLOG_META_INTERPRETER)
     parser.add_argument("--max_depth", type=int, default=PROLOG_MAX_DEPTH)
     parser.add_argument("--prolog_max_result", type=int, default=PROLOG_MAX_RESULT)
+    parser.add_argument("--debug", action="store_true", help="enable debug logging and keep tmp files")
+    parser.add_argument("--keep_tmp", action="store_true", help="keep Prolog temp files")
 
     args = parser.parse_args()
 
@@ -843,7 +884,10 @@ if __name__ == "__main__":
         data_path=args.data_path,
         log_dir_override=args.log_dir,
         mock_llm=args.mock_llm,
+        mock_profile=args.mock_profile,
         meta_interpreter=args.meta_interpreter,
         max_depth=args.max_depth,
         prolog_max_result=args.prolog_max_result,
+        debug=args.debug,
+        keep_tmp=args.keep_tmp,
     )
