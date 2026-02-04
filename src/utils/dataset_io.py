@@ -1,8 +1,9 @@
 import json
 import logging
+import os
 import re
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable, List, Optional, Sequence
 
 
 def load_jsonl(path: str) -> List[Any]:
@@ -29,6 +30,54 @@ def load_jsonl(path: str) -> List[Any]:
         except json.JSONDecodeError:
             continue
     return items
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+def _format_data_path_error(dataset_key: str, tried_paths: Sequence[str], explicit: bool) -> str:
+    prefix = "Provided --data_path does not exist." if explicit else "Dataset file not found."
+    return (
+        f"{prefix} Dataset={dataset_key}. "
+        f"尝试过哪些路径: {', '.join(tried_paths)}. "
+        "如何通过 --data_path 指定: "
+        "python -m src.run_experiment --dataset <dataset> --method <method> --data_path /path/to/file.jsonl"
+    )
+
+
+def resolve_data_path(dataset_key: str, data_path: Optional[str] = None, base_dir: Optional[Path] = None) -> str:
+    root = Path(base_dir) if base_dir is not None else _project_root()
+    normalized = dataset_key.lower()
+    tried: List[str] = []
+
+    if data_path:
+        candidate = Path(data_path)
+        tried.append(str(candidate))
+        if candidate.exists():
+            return str(candidate)
+        raise FileNotFoundError(_format_data_path_error(normalized, tried, explicit=True))
+
+    candidates = [
+        root / "data" / normalized / "test.jsonl",
+        root / "data" / normalized / "test_small.jsonl",
+        root / "log" / f"{normalized}.jsonl",
+    ]
+    for candidate in candidates:
+        tried.append(str(candidate))
+        if candidate.exists():
+            return str(candidate)
+
+    raise FileNotFoundError(_format_data_path_error(normalized, tried, explicit=False))
+
+
+def validate_openai_api_key(mock_llm: bool) -> None:
+    if mock_llm:
+        return
+    if os.getenv("OPENAI_API_KEY", "").strip():
+        return
+    raise ValueError(
+        "OPENAI_API_KEY is empty. "
+        "In PowerShell, set it with: $env:OPENAI_API_KEY='your-key'."
+    )
 
 def _first_present(data: dict, keys: Iterable[str]) -> Optional[Any]:
     for key in keys:

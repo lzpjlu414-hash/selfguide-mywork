@@ -3,6 +3,7 @@ import json
 import time
 import os
 import re
+import sys
 from glob import glob
 from typing import Optional, Tuple, List
 
@@ -14,7 +15,11 @@ from argparse import ArgumentParser
 from pathlib import Path
 import subprocess
 
-from src.utils.dataset_io import load_dataset
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from src.utils.dataset_io import load_dataset, resolve_data_path, validate_openai_api_key
 from src.utils.scoring import (
     extract_gsm8k_final_number as extract_gsm8k_number,
     postprocess_pred as postprocess_gsm8k_pred,
@@ -153,7 +158,6 @@ def extract_prolog_clauses(code: str) -> list:
 
 
 import subprocess
-import sys
 
 
 def run_caring_call_swipl(
@@ -548,8 +552,7 @@ def self_guide_run(
     max_depth: int = PROLOG_MAX_DEPTH,
     prolog_max_result: int = PROLOG_MAX_RESULT,
 ):
-    if (not mock_llm) and (not os.getenv("OPENAI_API_KEY", "")):
-       raise ValueError("OPENAI_API_KEY is empty. Please set env OPENAI_API_KEY.")
+    validate_openai_api_key(mock_llm)
 
 
     dataset_key = dataset.lower()
@@ -557,12 +560,10 @@ def self_guide_run(
 
     # data_path = f"log_guideline/{dataset}.jsonl"
     data_path = data_path or f"log/{dataset_key}.jsonl"
-    if not os.path.exists(data_path):
-        print(
-            f"Dataset file not found: {data_path}. "
-            "Provide --data_path to a JSON/JSONL file for this dataset.",
-            file=sys.stderr,
-        )
+    try:
+        data_path = resolve_data_path(dataset_key, data_path)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
         sys.exit(2)
 
     log_dir = log_dir_override or f"log/{method_key}/{dataset_key}"

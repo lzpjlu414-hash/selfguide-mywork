@@ -6,6 +6,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
+
 from src.abs.self_guide_myself import self_guide_run
 
 
@@ -29,13 +31,11 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    data_path = args.data_path or f"log/{args.dataset}.jsonl"
-    if not os.path.exists(data_path):
-        print(
-            f"Dataset file not found: {data_path}. "
-            "Provide --data_path to a JSON/JSONL file for this dataset.",
-            file=sys.stderr,
-        )
+    validate_openai_api_key(args.mock_llm)
+    try:
+        data_path = resolve_data_path(args.dataset, args.data_path)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
         sys.exit(2)
 
     self_guide_run(
