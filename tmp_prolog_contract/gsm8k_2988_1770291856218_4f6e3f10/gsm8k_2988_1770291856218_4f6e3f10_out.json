@@ -1,0 +1,1 @@
+{"schema_version": "1.0", "ok": true, "answer": "ans4", "proof": "=>(=>(true, fact(ans4)), answer(ans4))\n=>(=>(builtin(true), fact(ans4)), answer(ans4))", "error_code": null, "raw": {"results_count": 20, "returncode": 0, "stdout_tail": "", "stderr_tail": "", "meta_interpreter": "iter_deep_with_proof", "max_depth": 25}}

@@ -1,0 +1,1 @@
+{"schema_version": "1.0", "ok": false, "answer": null, "proof": null, "error_code": "SWIPL_EXEC_EXCEPTION", "raw": "[Errno 2] No such file or directory: '.\\\\tmp_schema_test\\\\__no_such_file__.pl'"}
