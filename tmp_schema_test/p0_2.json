@@ -1,0 +1,1 @@
+{"correctness": false, "route": "llm_only", "error_code": "LEGACY_SCHEMA", "config_hash": "638e6b88a92b", "prolog": {"enabled": true, "swipl": {"ok": false}, "swipl_contract": {"schema_version": "LEGACY_SCHEMA", "legacy": true}}}

@@ -44,6 +44,11 @@ def summarize_logs(log_dir: Path) -> dict:
             "correctness_missing": 0,
             "prolog_missing": 0,
             "prolog_swipl_ok": 0,
+            "error_code_distribution": {},
+            "schema_version_distribution": {},
+            "legacy_schema_hits": 0,
+            "legacy_schema_hit_rate": 0.0,
+            "config_hash_distribution": {},
         }
 
     correct = 0
@@ -53,6 +58,10 @@ def summarize_logs(log_dir: Path) -> dict:
     prolog_missing = 0
     proof_nonempty = 0
     prolog_swipl_ok = 0
+    error_code_counts = Counter()
+    schema_version_counts = Counter()
+    config_hash_counts = Counter()
+    legacy_schema_hits = 0
 
     for path in logs:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -64,6 +73,12 @@ def summarize_logs(log_dir: Path) -> dict:
 
         route = normalize_route(data.get("route"))
         route_counts[route] += 1
+
+        error_code = str(data.get("error_code") or "UNKNOWN")
+        error_code_counts[error_code] += 1
+
+        config_hash = str(data.get("config_hash") or "UNKNOWN")
+        config_hash_counts[config_hash] += 1
 
         prolog = data.get("prolog")
         if not isinstance(prolog, dict):
@@ -82,6 +97,13 @@ def summarize_logs(log_dir: Path) -> dict:
         if isinstance(swipl, dict) and to_bool(swipl.get("ok")):
             prolog_swipl_ok += 1
 
+        swipl_contract = prolog.get("swipl_contract") if isinstance(prolog, dict) else None
+        if isinstance(swipl_contract, dict):
+            schema_version = str(swipl_contract.get("schema_version") or "UNKNOWN")
+            schema_version_counts[schema_version] += 1
+            if to_bool(swipl_contract.get("legacy")):
+                legacy_schema_hits += 1
+
     accuracy = correct / total
     return {
         "N": total,
@@ -92,4 +114,9 @@ def summarize_logs(log_dir: Path) -> dict:
         "correctness_missing": correctness_missing,
         "prolog_missing": prolog_missing,
         "prolog_swipl_ok": prolog_swipl_ok,
+        "error_code_distribution": dict(error_code_counts),
+        "schema_version_distribution": dict(schema_version_counts),
+        "legacy_schema_hits": legacy_schema_hits,
+        "legacy_schema_hit_rate": (legacy_schema_hits / total),
+        "config_hash_distribution": dict(config_hash_counts),
     }

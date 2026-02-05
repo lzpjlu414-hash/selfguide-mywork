@@ -1,0 +1,1 @@
+{"correctness": true, "route": "executor", "error_code": "OK", "config_hash": "638e6b88a92b", "prolog": {"enabled": true, "proof": "ok", "swipl": {"ok": true}, "swipl_contract": {"schema_version": "1.0", "legacy": false}}}

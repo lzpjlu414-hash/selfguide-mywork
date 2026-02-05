@@ -58,6 +58,11 @@ def main(argv: Optional[list[str]] = None) -> None:
         print(f"correctness_missing={summary['correctness_missing']}")
         print(f"prolog_missing={summary['prolog_missing']}")
         print(f"prolog_swipl_ok={summary['prolog_swipl_ok']}")
+        print(f"error_code_distribution={summary['error_code_distribution']}")
+        print(f"schema_version_distribution={summary['schema_version_distribution']}")
+        print(f"legacy_schema_hits={summary['legacy_schema_hits']}")
+        print(f"legacy_schema_hit_rate={summary['legacy_schema_hit_rate']:.4f}")
+        print(f"config_hash_distribution={summary['config_hash_distribution']}")
 
 
 if __name__ == "__main__":

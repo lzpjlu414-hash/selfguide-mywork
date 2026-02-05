@@ -31,6 +31,16 @@ except ImportError:  # pragma: no cover - fallback for direct script execution
     )
 
 from src.abs.common_entry import create_base_parser, run_main
+from src.common import (
+    PROMPT_CONTRACT_VERSION,
+    PROMPT_VERSIONS,
+    PROLOG_CONTRACT_VERSION,
+    build_config_hash,
+    normalize_error_code,
+    validate_output_format,
+    validate_prolog_contract,
+    validate_prompt_inputs,
+)
 # 解析 Guideline 里的 task_type（Yes/No/Partial）
 # 构造 “只输出 Prolog” 的提示词（给 Round C 的 Prolog 生成用）
 # 把 Prolog 输出清洗成 clauses，并 subprocess 调 CaRing 的 call_swipl.py
@@ -350,6 +360,9 @@ SLEEP_SEC = float(os.getenv("SLEEP_SEC", "0.5"))
 PROLOG_MAX_RESULT = 20
 PROLOG_META_INTERPRETER = "iter_deep_with_proof"
 PROLOG_MAX_DEPTH = 25
+SOLVE_TEMPERATURE = 0.2
+GUIDE_TEMPERATURE = 0.7
+MAX_RETRIES = 3
 
 def postprocess_pred(dataset_key: str, pred: str) -> str:
     pred = (pred or "").strip()
@@ -558,7 +571,7 @@ def generate_guideline_from_prompt(
         g = ai_request(
             h,
             model=GUIDE_MODEL,
-            t=0.7,
+            t=GUIDE_TEMPERATURE,
             mock_llm=mock_llm,
             mock_profile=mock_profile,
             dataset_key=dataset_key,
@@ -700,13 +713,39 @@ def self_guide_run(
 
         qblock, format_rule = build_question_block(dataset_key, data)
 
+        base_run_config = {
+            "dataset": dataset_key,
+            "method": method_key,
+            "solve_model": SOLVE_MODEL,
+            "guide_model": GUIDE_MODEL,
+            "solve_temperature": SOLVE_TEMPERATURE,
+            "guide_temperature": GUIDE_TEMPERATURE,
+            "max_retries": MAX_RETRIES,
+            "prompt_contract_version": PROMPT_CONTRACT_VERSION,
+            "prompt_versions": PROMPT_VERSIONS,
+            "prolog_contract_version": PROLOG_CONTRACT_VERSION,
+            "swipl_schema_version": SWIPL_OUT_SCHEMA_VERSION,
+            "meta_interpreter": meta_interpreter,
+            "max_depth": max_depth,
+            "prolog_max_result": prolog_max_result,
+            "force_task_type": force_task_type,
+            "mock_profile": mock_profile,
+            "mock_llm": mock_llm,
+            "mock_prolog": mock_prolog,
+        }
+        config_hash = build_config_hash(base_run_config)
+        sample_error_code = "OK"
+
         ## ---------- Round 0: CoT draft (A) ----------
+        contract_round_a = validate_prompt_inputs("round_a_draft", {"qblock": qblock, "format_rule": format_rule})
+        if not contract_round_a.ok:
+            sample_error_code = normalize_error_code(contract_round_a.error_code)
         cot_prompt = build_cot_draft_prompt(qblock, format_rule)
         draft_history = [{"role": "user", "content": cot_prompt}]
         draft_raw = ai_request(
             draft_history,
             model=SOLVE_MODEL,
-            t=0.2,
+            t=SOLVE_TEMPERATURE,
             mock_llm=mock_llm,
             mock_profile=mock_profile,
             dataset_key=dataset_key,
@@ -719,6 +758,10 @@ def self_guide_run(
         draft = postprocess_pred(dataset_key, draft_raw)  # 统计/日志用
 
         # ---------- Round 1: generate guideline (B) ----------
+        contract_round_b = validate_prompt_inputs("round_b_guideline", {"dataset_key": dataset_key, "qblock": qblock,
+                                                                        "format_rule": format_rule})
+        if sample_error_code == "OK" and not contract_round_b.ok:
+            sample_error_code = normalize_error_code(contract_round_b.error_code)
         g_prompt = build_guideline_prompt(dataset_key, qblock, format_rule)
         guideline = generate_guideline_from_prompt(
             g_prompt,
@@ -730,6 +773,18 @@ def self_guide_run(
         time.sleep(SLEEP_SEC)
 
         # ---------- Round 2: solve with guideline + draft (C) ----------
+        contract_round_c = validate_prompt_inputs(
+            "round_c_solve",
+            {
+                "dataset_key": dataset_key,
+                "qblock": qblock,
+                "guideline": guideline,
+                "format_rule": format_rule,
+                "method_key": method_key,
+            },
+        )
+        if sample_error_code == "OK" and not contract_round_c.ok:
+            sample_error_code = normalize_error_code(contract_round_c.error_code)
         solve_prompt = build_solve_prompt(
             dataset_key, qblock, guideline, format_rule, method_key, draft_answer=draft_raw_short
         )
@@ -739,13 +794,16 @@ def self_guide_run(
         pred_raw = ai_request(
             history,
             model=SOLVE_MODEL,
-            t=0.2,
+            t=SOLVE_TEMPERATURE,
             mock_llm=mock_llm,
             mock_profile=mock_profile,
             dataset_key=dataset_key,
             prompt_type="solve",
         )
         pred = postprocess_pred(dataset_key, pred_raw)
+        output_contract = validate_output_format(dataset_key, pred)
+        if sample_error_code == "OK" and not output_contract.ok:
+            sample_error_code = normalize_error_code(output_contract.error_code)
 
 
         # ======== Round C': optional Prolog verification/execution (CaRing) ========
@@ -779,7 +837,7 @@ def self_guide_run(
                 prolog_raw = ai_request(
                     prolog_history,
                     model=SOLVE_MODEL,
-                    t=0.2,
+                    t=SOLVE_TEMPERATURE,
                     mock_llm=mock_llm,
                     mock_profile=mock_profile,
                     dataset_key=dataset_key,
@@ -790,6 +848,15 @@ def self_guide_run(
                 try:
                     clauses = extract_prolog_clauses(prolog_raw)
                     prolog_pack["clauses"] = clauses
+                    prolog_contract = validate_prolog_contract(clauses)
+                    prolog_pack["contract"] = {
+                        "version": PROLOG_CONTRACT_VERSION,
+                        "ok": prolog_contract.ok,
+                        "error_code": prolog_contract.error_code,
+                        "message": prolog_contract.message,
+                    }
+                    if sample_error_code == "OK" and not prolog_contract.ok:
+                        sample_error_code = normalize_error_code(prolog_contract.error_code)
 
                     # (2) 执行 CaRing 的 call_swipl.py
                     if mock_prolog:
@@ -836,6 +903,8 @@ def self_guide_run(
 
                     prolog_pack["proof"] = prolog_proof
                     prolog_pack["error_code"] = prolog_error_code
+                    if sample_error_code == "OK" and prolog_error_code:
+                        sample_error_code = normalize_error_code(prolog_error_code)
 
                     if meta_interpreter in ("with_proof", "iter_deep_with_proof") and swipl_contract.get("ok"):
                         if not prolog_pack["proof"]:
@@ -889,6 +958,8 @@ def self_guide_run(
                     }
                     route = "llm_only"
                     final_answer = llm_candidate_norm
+                    if sample_error_code == "OK":
+                        sample_error_code = "SELF_GUIDE_SWIPL_EXCEPTION"
                     route_reason = f"Prolog parse/execute exception: {e}"
                     prolog_pack["fallback_reason"] = route_reason
                     prolog_pack["clauses_count"] = None
@@ -934,6 +1005,13 @@ def self_guide_run(
                 "force_task_type": force_task_type,
                 "solve_model": SOLVE_MODEL,
                 "guide_model": GUIDE_MODEL,
+                "solve_temperature": SOLVE_TEMPERATURE,
+                "guide_temperature": GUIDE_TEMPERATURE,
+                "max_retries": MAX_RETRIES,
+                "prompt_contract_version": PROMPT_CONTRACT_VERSION,
+                "prompt_versions": PROMPT_VERSIONS,
+                "prolog_contract_version": PROLOG_CONTRACT_VERSION,
+                "swipl_schema_version": SWIPL_OUT_SCHEMA_VERSION,
                 "mock_profile": mock_profile,
                 "mock_llm": mock_llm,
                 "mock_prolog": mock_prolog,
@@ -944,6 +1022,7 @@ def self_guide_run(
                 "max_depth": max_depth,
                 "debug": debug,
                 "keep_tmp": keep_tmp,
+                "config_hash": config_hash,
             },
             "guideline": guideline,
             "gold": gold,
@@ -961,6 +1040,12 @@ def self_guide_run(
             "route": route,
             "prolog": prolog_pack,
             "route_reason": route_reason,
+            "error_code": normalize_error_code(sample_error_code),
+            "config_hash": config_hash,
+            "contracts": {
+                "prompt": {"version": PROMPT_CONTRACT_VERSION, "round_versions": PROMPT_VERSIONS},
+                "prolog": {"version": PROLOG_CONTRACT_VERSION, "schema_version": SWIPL_OUT_SCHEMA_VERSION},
+            },
         }
 
         with open(log_path, "w", encoding="utf-8") as lf:
