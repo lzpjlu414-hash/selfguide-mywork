@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import logging
@@ -57,10 +58,14 @@ def _load_json_or_yaml(path: Path) -> dict[str, Any]:
         payload = json.loads(text)
     elif suffix in {".yaml", ".yml"}:
         try:
-            import yaml  # type: ignore
-        except ModuleNotFoundError as exc:  # pragma: no cover
-            raise RuntimeError("PyYAML is required for YAML configs. Please install pyyaml.") from exc
-        payload = yaml.safe_load(text)
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            try:
+                import yaml  # type: ignore
+            except ModuleNotFoundError as exc:  # pragma: no cover
+                raise RuntimeError(
+                    "YAML config requires PyYAML, or provide JSON-formatted text in .yaml file.") from exc
+            payload = yaml.safe_load(text)
     else:
         raise ValueError(f"Unsupported config extension: {path.suffix}")
 
@@ -78,6 +83,7 @@ def load_matrix_config(config_path: str) -> dict[str, Any]:
     payload.setdefault("matrix_name", path.stem)
     payload.setdefault("output_root", "runs")
     payload.setdefault("continue_on_error", True)
+    payload.setdefault("parallelism", 1)
     payload.setdefault("base_experiment", {})
     if not isinstance(payload["base_experiment"], dict):
         raise ValueError("base_experiment must be an object")
@@ -114,6 +120,7 @@ def _timestamp() -> str:
 
 
 def _build_cli_args(expanded: dict[str, Any], run_dir: Path) -> list[str]:
+    num_samples = expanded.get("num_samples", expanded.get("max_samples", 1))
     args = [
         "--method",
         str(expanded["method"]),
@@ -122,7 +129,7 @@ def _build_cli_args(expanded: dict[str, Any], run_dir: Path) -> list[str]:
         "--start_index",
         str(expanded.get("start_index", 0)),
         "--num_samples",
-        str(expanded.get("num_samples", 1)),
+        str(num_samples),
         "--log_dir",
         str(run_dir),
     ]
@@ -222,15 +229,20 @@ def run_matrix(
     matrix_name = str(config["matrix_name"])
     output_root = Path(config["output_root"])
     continue_on_error = bool(config.get("continue_on_error", True))
+    parallelism = int(config.get("parallelism", 1))
     base_experiment = dict(config["base_experiment"])
+    if "max_samples" in base_experiment and "num_samples" not in base_experiment:
+        base_experiment["num_samples"] = base_experiment["max_samples"]
     variants = _build_variants(config)
 
     ts = _timestamp()
     failed_tags: list[str] = []
 
-    for variant in variants:
+    def _run_variant(variant: MatrixVariant) -> tuple[str, int]:
         expanded = dict(base_experiment)
         expanded.update(variant.overrides)
+        if "max_samples" in expanded and "num_samples" not in expanded:
+            expanded["num_samples"] = expanded["max_samples"]
         expanded["force_task_type"] = _normalize_force_task_type(expanded.get("force_task_type"))
         config_hash = canonical_config_hash(expanded)
         run_dir = _prepare_run_dir(output_root, matrix_name, variant.tag, ts)
@@ -254,16 +266,30 @@ def run_matrix(
                 json.dumps(run_config, indent=2, ensure_ascii=False), encoding="utf-8"
             )
             logger.info("[matrix] done variant=%s", variant.tag)
+            return variant.tag, 0
         except SystemExit as exc:
-            failed_tags.append(variant.tag)
             logger.exception("[matrix] variant=%s failed with SystemExit code=%s", variant.tag, exc.code)
-            if not continue_on_error:
-                return int(exc.code) if isinstance(exc.code, int) else 1
+            return variant.tag, 0
         except Exception:
-            failed_tags.append(variant.tag)
             logger.exception("[matrix] variant=%s failed with unhandled exception", variant.tag)
-            if not continue_on_error:
-                return 1
+            return variant.tag, 1
+
+    if parallelism <= 1:
+            for variant in variants:
+                    tag, code = _run_variant(variant)
+                    if code != 0:
+                        failed_tags.append(tag)
+                        if not continue_on_error:
+                            return code
+    else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=parallelism) as executor:
+                    futures = {executor.submit(_run_variant, variant): variant for variant in variants}
+                    for future in concurrent.futures.as_completed(futures):
+                        tag, code = future.result()
+                        if code != 0:
+                            failed_tags.append(tag)
+                            if not continue_on_error:
+                                return code
 
     if failed_tags:
         logger.error("[matrix] failed variants: %s", ", ".join(failed_tags))
@@ -274,11 +300,14 @@ def run_matrix(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run 4-way experiment matrix")
     parser.add_argument("--config", required=True, help="Path to matrix config (.json/.yaml)")
+    parser.add_argument("--out", default=None, help="Optional output root override")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         config = load_matrix_config(args.config)
+        if args.out:
+            config["output_root"] = args.out
         return run_matrix(config)
     except ValueError as exc:
         print(f"[matrix] config error: {exc}", file=sys.stderr)

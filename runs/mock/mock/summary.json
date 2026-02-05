@@ -1,0 +1,121 @@
+{
+  "matrix_dir": "runs\\mock\\mock",
+  "variants": {
+    "abc_no_prolog": {
+      "run_dir": "runs\\mock\\mock\\abc_no_prolog\\20260206-003733",
+      "N": 2,
+      "accuracy": 0.0,
+      "route_distribution": {
+        "llm_only": 2
+      },
+      "prolog_enabled": 0,
+      "proof_nonempty": 0,
+      "correctness_missing": 0,
+      "prolog_missing": 0,
+      "prolog_swipl_ok": 0,
+      "error_code_distribution": {
+        "OK": 2
+      },
+      "schema_version_distribution": {},
+      "legacy_schema_hits": 0,
+      "legacy_schema_hit_rate": 0.0,
+      "config_hash_distribution": {
+        "22329530180d": 2
+      },
+      "copy_rate": 0.0,
+      "copy_and_wrong_rate": 0.0,
+      "corrected_rate": 0.0,
+      "prolog_overrule_rate": 0.0,
+      "fallback_rate": 0.0,
+      "schema_error_rate": 0.0
+    },
+    "abc_prolog_executor_subset": {
+      "run_dir": "runs\\mock\\mock\\abc_prolog_executor_subset\\20260206-003733",
+      "N": 2,
+      "accuracy": 0.0,
+      "route_distribution": {
+        "executor": 2
+      },
+      "prolog_enabled": 2,
+      "proof_nonempty": 2,
+      "correctness_missing": 0,
+      "prolog_missing": 0,
+      "prolog_swipl_ok": 2,
+      "error_code_distribution": {
+        "OK": 2
+      },
+      "schema_version_distribution": {
+        "1.0": 2
+      },
+      "legacy_schema_hits": 0,
+      "legacy_schema_hit_rate": 0.0,
+      "config_hash_distribution": {
+        "b541201f9e10": 2
+      },
+      "copy_rate": 0.0,
+      "copy_and_wrong_rate": 0.0,
+      "corrected_rate": 0.0,
+      "prolog_overrule_rate": 1.0,
+      "fallback_rate": 0.0,
+      "schema_error_rate": 0.0
+    },
+    "abc_prolog_verifier": {
+      "run_dir": "runs\\mock\\mock\\abc_prolog_verifier\\20260206-003733",
+      "N": 2,
+      "accuracy": 0.0,
+      "route_distribution": {
+        "executor": 2
+      },
+      "prolog_enabled": 2,
+      "proof_nonempty": 2,
+      "correctness_missing": 0,
+      "prolog_missing": 0,
+      "prolog_swipl_ok": 2,
+      "error_code_distribution": {
+        "OK": 2
+      },
+      "schema_version_distribution": {
+        "1.0": 2
+      },
+      "legacy_schema_hits": 0,
+      "legacy_schema_hit_rate": 0.0,
+      "config_hash_distribution": {
+        "520873a7db35": 2
+      },
+      "copy_rate": 0.0,
+      "copy_and_wrong_rate": 0.0,
+      "corrected_rate": 0.0,
+      "prolog_overrule_rate": 1.0,
+      "fallback_rate": 0.0,
+      "schema_error_rate": 0.0
+    },
+    "baseline_single_round": {
+      "run_dir": "runs\\mock\\mock\\baseline_single_round\\20260206-003733",
+      "N": 2,
+      "accuracy": 0.0,
+      "route_distribution": {
+        "llm_only": 2
+      },
+      "prolog_enabled": 0,
+      "proof_nonempty": 0,
+      "correctness_missing": 0,
+      "prolog_missing": 0,
+      "prolog_swipl_ok": 0,
+      "error_code_distribution": {
+        "OK": 2
+      },
+      "schema_version_distribution": {},
+      "legacy_schema_hits": 0,
+      "legacy_schema_hit_rate": 0.0,
+      "config_hash_distribution": {
+        "22329530180d": 2
+      },
+      "copy_rate": 0.0,
+      "copy_and_wrong_rate": 0.0,
+      "corrected_rate": 0.0,
+      "prolog_overrule_rate": 0.0,
+      "fallback_rate": 0.0,
+      "schema_error_rate": 0.0
+    }
+  }
+}

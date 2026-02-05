@@ -1,0 +1,5 @@
+variant,run_dir,N,accuracy,route_distribution,fallback_rate,schema_error_rate,copy_rate,copy_and_wrong_rate,corrected_rate,prolog_overrule_rate
+abc_no_prolog,runs\mock\mock\abc_no_prolog\20260206-003733,2,0.0,llm_only:2,0.0,0.0,0.0,0.0,0.0,0.0
+abc_prolog_executor_subset,runs\mock\mock\abc_prolog_executor_subset\20260206-003733,2,0.0,executor:2,0.0,0.0,0.0,0.0,0.0,1.0
+abc_prolog_verifier,runs\mock\mock\abc_prolog_verifier\20260206-003733,2,0.0,executor:2,0.0,0.0,0.0,0.0,0.0,1.0
+baseline_single_round,runs\mock\mock\baseline_single_round\20260206-003733,2,0.0,llm_only:2,0.0,0.0,0.0,0.0,0.0,0.0

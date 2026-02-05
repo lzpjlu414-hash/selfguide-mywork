@@ -1,5 +1,5 @@
 {
-  "matrix_name": "real",
+  "matrix_name": "mock",
   "output_root": "runs",
   "continue_on_error": true,
   "parallelism": 2,
@@ -7,9 +7,9 @@
     "dataset": "gsm8k",
     "method": "cot_selfguide",
     "start_index": 0,
-    "max_samples": 200,
-    "mock_llm": false,
-    "mock_prolog": false
+    "max_samples": 2,
+    "mock_llm": true,
+    "mock_prolog": true
   },
   "variants": [
     {
