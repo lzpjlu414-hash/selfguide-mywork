@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import logging
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,8 @@ from src.run_experiment import main as run_single_experiment
 from src.utils.dataset_io import load_dataset, resolve_data_path
 
 logger = logging.getLogger(__name__)
+
+VALID_FORCE_TASK_TYPES = ("Yes", "No", "Partial")
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,26 @@ def _build_cli_args(expanded: dict[str, Any], run_dir: Path) -> list[str]:
             args.append(f"--{flag}")
     return args
 
+def _normalize_force_task_type(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized in VALID_FORCE_TASK_TYPES:
+            return normalized
+        allowed = ", ".join(VALID_FORCE_TASK_TYPES)
+        raise ValueError(
+            f"Invalid force_task_type: {value!r}. Allowed values are: {allowed}. "
+            "Booleans are also accepted and mapped as True->Yes, False->No."
+        )
+
+    allowed = ", ".join(VALID_FORCE_TASK_TYPES)
+    raise ValueError(
+        f"Invalid force_task_type type: {type(value).__name__}. "
+        f"Use one of: {allowed}, or booleans True/False."
+    )
 
 def _collect_predictions(run_dir: Path, expanded: dict[str, Any], config_hash: str) -> None:
     dataset = str(expanded["dataset"]).lower()
@@ -200,6 +223,7 @@ def run_matrix(
     for variant in variants:
         expanded = dict(base_experiment)
         expanded.update(variant.overrides)
+        expanded["force_task_type"] = _normalize_force_task_type(expanded.get("force_task_type"))
         config_hash = canonical_config_hash(expanded)
         run_dir = _prepare_run_dir(output_root, matrix_name, variant.tag, ts)
         cli_args = _build_cli_args(expanded, run_dir)
@@ -245,8 +269,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    config = load_matrix_config(args.config)
-    return run_matrix(config)
+    try:
+        config = load_matrix_config(args.config)
+        return run_matrix(config)
+    except ValueError as exc:
+        print(f"[matrix] config error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
