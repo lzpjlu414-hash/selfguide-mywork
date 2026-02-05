@@ -1,36 +1,26 @@
 import sys
-from argparse import ArgumentParser
 from pathlib import Path
+from typing import Optional
 
 from src.abs.self_guide_myself import self_guide_run
+from src.experiment_contract import (
+    build_experiment_parser,
+    resolve_log_dir,
+    validate_contract,
+)
 from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
 
+def main(argv: Optional[list[str]] = None) -> None:
+    parser = build_experiment_parser()
+    args = parser.parse_args(argv)
 
 
-def main() -> None:
-    parser = ArgumentParser(description="Run Self-Guide experiments across datasets.")
-    parser.add_argument(
-        "--dataset",
-        default="gsm8k",
-        choices=["gsm8k", "prontoqa", "proofwriter", "mmlu", "sqa", "date", "clutrr"],
-    )
-    parser.add_argument("--method", required=True, choices=["cot_selfguide", "sd_selfguide"])
-    parser.add_argument("--start_index", type=int, default=0)
-    parser.add_argument("--num_samples", type=int, default=1)
-    parser.add_argument("--data_path", default=None)
-    parser.add_argument("--log_dir", default=None)
-    parser.add_argument("--mock_llm", action="store_true")
-    parser.add_argument("--mock_profile", default=None)
-    parser.add_argument("--mock_prolog", action="store_true")
-    parser.add_argument("--force_task_type", choices=("Yes", "No", "Partial"), default=None)
-    parser.add_argument("--meta_interpreter", default="iter_deep_with_proof")
-    parser.add_argument("--max_depth", type=int, default=25)
-    parser.add_argument("--prolog_max_result", type=int, default=20)
-    parser.add_argument("--tmp_dir", default=None, help="root dir for Prolog temp files")
-    parser.add_argument("--keep_tmp", action="store_true", help="keep Prolog temp files")
-    parser.add_argument("--summarize", action="store_true", help="summarize logs after run")
 
-    args = parser.parse_args()
+    try:
+        validate_contract(args)
+    except ValueError as exc:
+        print(f"Invalid experiment args: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     validate_openai_api_key(args.mock_llm)
     try:
@@ -58,7 +48,7 @@ def main() -> None:
     )
     if args.summarize:
         from src.summarize_logs import summarize_logs
-        log_dir = Path(args.log_dir) if args.log_dir else Path(f"log/{args.method}/{args.dataset}")
+        log_dir: Path = resolve_log_dir(args)
         summary = summarize_logs(log_dir)
         print(f"N={summary['N']}")
         print(f"accuracy={summary['accuracy']:.4f}")
