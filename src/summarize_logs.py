@@ -32,7 +32,7 @@ def normalize_route(route: Any) -> str:
 
 
 def summarize_logs(log_dir: Path) -> dict:
-    logs = sorted(log_dir.glob("*.json"))
+    logs = sorted(p for p in log_dir.glob("*.json") if p.name != "run_config.json")
     total = len(logs)
     if total == 0:
         return {
@@ -49,6 +49,10 @@ def summarize_logs(log_dir: Path) -> dict:
             "legacy_schema_hits": 0,
             "legacy_schema_hit_rate": 0.0,
             "config_hash_distribution": {},
+            "copy_rate": 0.0,
+            "copy_and_wrong_rate": 0.0,
+            "corrected_rate": 0.0,
+            "prolog_overrule_rate": 0.0,
         }
 
     correct = 0
@@ -62,6 +66,11 @@ def summarize_logs(log_dir: Path) -> dict:
     schema_version_counts = Counter()
     config_hash_counts = Counter()
     legacy_schema_hits = 0
+
+    copy_count = 0
+    copy_and_wrong_count = 0
+    corrected_count = 0
+    prolog_overrule_count = 0
 
     for path in logs:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -104,6 +113,24 @@ def summarize_logs(log_dir: Path) -> dict:
             if to_bool(swipl_contract.get("legacy")):
                 legacy_schema_hits += 1
 
+        draft_final_same = to_bool(data.get("draft_final_same"))
+        if draft_final_same:
+            copy_count += 1
+
+        final_correct = to_bool(data.get("final_correct"))
+        if draft_final_same and final_correct is False:
+            copy_and_wrong_count += 1
+
+        draft_correct = to_bool(data.get("draft_correct"))
+        if draft_correct is False and final_correct is True:
+            corrected_count += 1
+
+        draft_prolog_conflict = to_bool(data.get("draft_prolog_conflict"))
+        if draft_prolog_conflict is None:
+            draft_prolog_conflict = to_bool(data.get("prolog_overruled"))
+        if draft_prolog_conflict:
+            prolog_overrule_count += 1
+
     accuracy = correct / total
     return {
         "N": total,
@@ -119,4 +146,8 @@ def summarize_logs(log_dir: Path) -> dict:
         "legacy_schema_hits": legacy_schema_hits,
         "legacy_schema_hit_rate": (legacy_schema_hits / total),
         "config_hash_distribution": dict(config_hash_counts),
+        "copy_rate": (copy_count / total),
+        "copy_and_wrong_rate": (copy_and_wrong_count / total),
+        "corrected_rate": (corrected_count / total),
+        "prolog_overrule_rate": (prolog_overrule_count / total),
     }

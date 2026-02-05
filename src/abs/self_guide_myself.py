@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover - fallback for direct script execution
     )
 
 from src.abs.common_entry import create_base_parser, run_main
+from src.metrics import compute_change_type, normalize_answer
 from src.common import (
     PROMPT_CONTRACT_VERSION,
     PROMPT_VERSIONS,
@@ -986,6 +987,25 @@ def self_guide_run(
 
         correctness = judge_correctness(dataset_key, gold, final_answer)
 
+        has_gold = bool(str(gold).strip())
+        draft_correct = judge_correctness(dataset_key, gold, draft) if has_gold else None
+        final_correct = judge_correctness(dataset_key, gold, final_answer) if has_gold else None
+        draft_final_same = normalize_answer(draft) == normalize_answer(final_answer)
+        prolog_used_for_final = route in ("executor", "verifier")
+        prolog_overruled = route == "verifier"
+        final_modified_by_prolog = prolog_overruled
+        draft_to_final_change_type = compute_change_type(
+            draft=draft,
+            final=final_answer,
+            prolog_used=prolog_used_for_final,
+            prolog_overruled=prolog_overruled,
+        )
+
+        draft_prolog_conflict = None
+        prolog_answer_norm = prolog_pack.get("prolog_answer_norm") if isinstance(prolog_pack, dict) else None
+        if prolog_answer_norm is not None:
+            draft_prolog_conflict = normalize_answer(draft) != normalize_answer(prolog_answer_norm)
+
 
         # ---------- save log ----------
         # ---------- save log ----------
@@ -1028,11 +1048,19 @@ def self_guide_run(
             "gold": gold,
             "draft_raw": draft_raw,
             "draft": draft,
+            "draft_answer": draft,
             "pred_raw": pred_raw,
             "pred": pred,
             "llm_candidate": llm_candidate,
             "llm_candidate_norm": llm_candidate_norm,
             "final_answer": final_answer,
+            "draft_final_same": draft_final_same,
+            "final_modified_by_prolog": final_modified_by_prolog,
+            "draft_to_final_change_type": draft_to_final_change_type,
+            "draft_correct": draft_correct,
+            "final_correct": final_correct,
+            "prolog_overruled": prolog_overruled,
+            "draft_prolog_conflict": draft_prolog_conflict,
             "correctness": correctness,
             "round1_guideline_prompt": g_prompt,
             "round2_solve_prompt": solve_prompt,
