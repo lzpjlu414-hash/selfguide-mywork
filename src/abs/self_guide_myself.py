@@ -9,7 +9,6 @@ from glob import glob
 from typing import Optional, Tuple, List
 
 
-from argparse import ArgumentParser
 
 from pathlib import Path
 import subprocess
@@ -31,6 +30,7 @@ except ImportError:  # pragma: no cover - fallback for direct script execution
         judge_correctness as judge_dataset_correctness,
     )
 
+from src.abs.common_entry import create_base_parser, run_main
 # 解析 Guideline 里的 task_type（Yes/No/Partial）
 # 构造 “只输出 Prolog” 的提示词（给 Round C 的 Prolog 生成用）
 # 把 Prolog 输出清洗成 clauses，并 subprocess 调 CaRing 的 call_swipl.py
@@ -907,45 +907,46 @@ def self_guide_run(
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("--dataset", required=True, help="gsm8k / prontoqa / proofwriter / mmlu / clutrr / sqa / date")
-    parser.add_argument("--method", required=True, help="sd_selfguide or cot_selfguide")
-    parser.add_argument("--start_index", type=int, default=0)
-    parser.add_argument("--num_samples", type=int, default=1)
-    parser.add_argument(
-        "--force_task_type",
-        choices=("Yes", "No", "Partial"),
-        default=None,
-    )
-    parser.add_argument("--data_path", default=None, help="override dataset jsonl path")
-    parser.add_argument("--log_dir", default=None, help="override log directory")
-    parser.add_argument("--mock_llm", action="store_true", help="use deterministic mock outputs (no API call)")
-    parser.add_argument("--mock_profile", default=None, help="mock profile name for mock_llm")
-    parser.add_argument("--mock_prolog", action="store_true", help="mock Prolog execution (no SWI-Prolog call)")
-    parser.add_argument("--meta_interpreter", default=PROLOG_META_INTERPRETER)
-    parser.add_argument("--max_depth", type=int, default=PROLOG_MAX_DEPTH)
-    parser.add_argument("--prolog_max_result", type=int, default=PROLOG_MAX_RESULT)
-    parser.add_argument("--debug", action="store_true", help="enable debug logging and keep tmp files")
-    parser.add_argument("--keep_tmp", action="store_true", help="keep Prolog temp files")
-    parser.add_argument("--tmp_dir", default=None, help="root dir for Prolog temp files")
+    def _main():
+        parser = create_base_parser(
+            "Self-guide baseline entrypoint",
+            dataset_help="gsm8k / prontoqa / proofwriter / mmlu / clutrr / sqa / date",
+            method_help="sd_selfguide or cot_selfguide",
+            include_num_samples=True,
+            include_log_dir=True,
+        )
+        parser.add_argument(
+            "--force_task_type",
+            choices=("Yes", "No", "Partial"),
+            default=None,
+        )
+        parser.add_argument("--mock_prolog", action="store_true", help="mock Prolog execution (no SWI-Prolog call)")
+        parser.add_argument("--meta_interpreter", default=PROLOG_META_INTERPRETER)
+        parser.add_argument("--max_depth", type=int, default=PROLOG_MAX_DEPTH)
+        parser.add_argument("--prolog_max_result", type=int, default=PROLOG_MAX_RESULT)
+        parser.add_argument("--debug", action="store_true", help="enable debug logging and keep tmp files")
+        parser.add_argument("--keep_tmp", action="store_true", help="keep Prolog temp files")
+        parser.add_argument("--tmp_dir", default=None, help="root dir for Prolog temp files")
 
-    args = parser.parse_args()
+        args = parser.parse_args()
 
-    self_guide_run(
-        args.dataset,
-        args.method,
-        args.start_index,
-        num_samples=args.num_samples,
-        force_task_type=args.force_task_type,
-        data_path=args.data_path,
-        log_dir_override=args.log_dir,
-        mock_llm=args.mock_llm,
-        mock_profile=args.mock_profile,
-        mock_prolog=args.mock_prolog,
-        meta_interpreter=args.meta_interpreter,
-        max_depth=args.max_depth,
-        prolog_max_result=args.prolog_max_result,
-        debug=args.debug,
-        keep_tmp=args.keep_tmp,
-        tmp_dir=args.tmp_dir,
-    )
+        self_guide_run(
+            args.dataset,
+            args.method,
+            args.start_index,
+            num_samples=args.num_samples,
+            force_task_type=args.force_task_type,
+            data_path=args.data_path,
+            log_dir_override=args.log_dir,
+            mock_llm=args.mock_llm,
+            mock_profile=args.mock_profile,
+            mock_prolog=args.mock_prolog,
+            meta_interpreter=args.meta_interpreter,
+            max_depth=args.max_depth,
+            prolog_max_result=args.prolog_max_result,
+            debug=args.debug,
+            keep_tmp=args.keep_tmp,
+            tmp_dir=args.tmp_dir,
+        )
+
+    run_main(_main)

@@ -2,12 +2,10 @@ import json
 import time
 import os
 import re
-import sys
 from typing import Optional
 
 
 from tqdm import tqdm
-from argparse import ArgumentParser
 
 
 # ============= OpenAI config =============
@@ -16,6 +14,7 @@ from argparse import ArgumentParser
 
 from src.llm_client import chat_complete, resolve_model
 from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
+from src.abs.common_entry import create_base_parser, ensure_log_dir, run_main, utc_now_iso, write_json
 
 MODEL = resolve_model(None, purpose="solve")
 
@@ -209,6 +208,7 @@ def baseline(
     method: str,
     start_index: int = 0,
     data_path: Optional[str] = None,
+    log_dir_override: Optional[str] = None,
     mock_llm: bool = False,
     mock_profile: Optional[str] = None,
 ):
@@ -219,14 +219,8 @@ def baseline(
 
     print(f"Running baseline for dataset={dataset_key}, method={method_key}, start_index={start_index}")
 
-    log_dir = f"log/{method_key}/{dataset_key}"
-    os.makedirs(log_dir, exist_ok=True)
-
-    try:
-        data_path = resolve_data_path(dataset_key, data_path)
-    except FileNotFoundError as exc:
-        print(str(exc), file=sys.stderr)
-        sys.exit(2)
+    log_dir = ensure_log_dir(log_dir_override or f"log/{method_key}/{dataset_key}")
+    data_path = resolve_data_path(dataset_key, data_path)
     with open(data_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
@@ -272,9 +266,18 @@ def baseline(
         # ---------- save log ----------
         log_filename = f"{dataset_key}_{i}.json"
         log_path = os.path.join(log_dir, log_filename)
-        with open(log_path, "w", encoding="utf-8") as lf:
-            json.dump(
-                {
+        write_json(
+            log_path,
+            {
+                "meta": {
+                    "entry": "self_verify_myself",
+                    "dataset": dataset_key,
+                    "method": method_key,
+                    "sample_index": i,
+                    "route": "llm_only",
+                    "timestamp_utc": utc_now_iso(),
+                    "error_code": None,
+                },
                     "id": sample_id,
                     "dataset": dataset_key,
                     "method": method_key,
@@ -286,27 +289,27 @@ def baseline(
                     "output": output,
                     "log": history,
                 },
-                lf,
-                indent=2,
-                ensure_ascii=False,
-            )
+        )
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("--dataset", required=True, help="mmlu / clutrr / sqa / date")
-    parser.add_argument("--method", required=True, help="sd_verify or cot_verify")
-    parser.add_argument("--start_index", type=int, default=0)
-    parser.add_argument("--data_path", default=None)
-    parser.add_argument("--mock_llm", action="store_true")
-    parser.add_argument("--mock_profile", default=None)
-    args = parser.parse_args()
+    def _main():
+        parser = create_base_parser(
+            "Self-verify baseline entrypoint",
+            dataset_help="mmlu / clutrr / sqa / date",
+            method_help="sd_verify or cot_verify",
+            include_log_dir=True,
+        )
+        args = parser.parse_args()
 
-    baseline(
-        args.dataset,
-        args.method,
-        args.start_index,
-        data_path=args.data_path,
-        mock_llm=args.mock_llm,
-        mock_profile=args.mock_profile,
-    )
+        baseline(
+            args.dataset,
+            args.method,
+            args.start_index,
+            data_path=args.data_path,
+            log_dir_override=args.log_dir,
+            mock_llm=args.mock_llm,
+            mock_profile=args.mock_profile,
+        )
+
+    run_main(_main)

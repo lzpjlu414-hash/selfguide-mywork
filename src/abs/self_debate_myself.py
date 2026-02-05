@@ -2,17 +2,12 @@ import json
 import time
 from tqdm import tqdm
 import os
-import sys
-from argparse import ArgumentParser
 import re #正则：主要用于 MMLU 的 A/B/C/D 抽取：re.search(r"\b([a-d])\b", pred_s)
 from src.llm_client import chat_complete, resolve_model
 from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
+from src.abs.common_entry import create_base_parser, ensure_log_dir, run_main, utc_now_iso, write_json
 
 MODEL = resolve_model(None, purpose="solve")
-
-def add_message(role, content, history):
-    history.append({"role": role, "content": content})
-
 
 
 def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
@@ -33,21 +28,15 @@ def judge_correctness(dataset_key: str, gold: str, pred: str) -> str:
     return "True" if gold_s in pred_s else "False"
 
 
-def baseline(dataset, method, start_index=0, data_path=None, mock_llm=False, mock_profile=None):
+def baseline(dataset, method, start_index=0, data_path=None, log_dir_override=None, mock_llm=False, mock_profile=None):
     validate_openai_api_key(mock_llm=mock_llm)
     print(f"Running baseline for dataset: {dataset}")
 
     dataset_key = dataset.lower()
     method_key = method.lower()
 
-    log_dir = f'log/{method}/{dataset}'
-    os.makedirs(log_dir, exist_ok=True)
-
-    try:
-        data_path = resolve_data_path(dataset_key, data_path)
-    except FileNotFoundError as exc:
-        print(str(exc), file=sys.stderr)
-        sys.exit(2)
+    log_dir = ensure_log_dir(log_dir_override or f'log/{method_key}/{dataset_key}')
+    data_path = resolve_data_path(dataset_key, data_path)
 
     with open(data_path, 'r', encoding='utf-8') as file:
         lines = file.readlines()
@@ -58,11 +47,9 @@ def baseline(dataset, method, start_index=0, data_path=None, mock_llm=False, moc
         id = data['id']
         question = data['question']
         answers = data['answer']
-        guideline = data.get('guideline', None)  # 目前没用到，先保留
 
         # ---------- 构造第一轮 prompt0（按 dataset + method 自动切换） ----------
         mcq = None  # 只给 mmlu 用
-        stem = None
 
         if dataset_key == "mmlu":
             choice = data["choices"]  # dict: {"A": "...", "B": "...", ...}
@@ -80,37 +67,34 @@ def baseline(dataset, method, start_index=0, data_path=None, mock_llm=False, moc
                 raise ValueError("Invalid method. Method must be 'sd_debate' or 'cot_debate'.")
 
         elif dataset_key == "clutrr":
-            stem = question
             if method_key == "cot_debate":
-                prompt0 = "Please think step by step, then answer.\n" + stem + "\nAnswer: "
+                prompt0 = "Please think step by step, then answer.\n" + question + "\nAnswer: "
             elif method_key == "sd_debate":
-                prompt0 = stem + "\nAnswer: "
+                prompt0 = question + "\nAnswer: "
             else:
                 raise ValueError("Invalid method. Method must be 'sd_debate' or 'cot_debate'.")
 
         elif dataset_key == "sqa":
-            stem = question
             if method_key == "cot_debate":
                 prompt0 = (
                     "Please think step by step, then answer Yes or No.\n"
-                    f"Question: {stem}\nAnswer: "
+                    f"Question: {question}\nAnswer: "
                 )
             elif method_key == "sd_debate":
                 prompt0 = (
-                    f"Question: {stem}\nYour answer should be Yes or No.\nAnswer: "
+                    f"Question: {question}\nYour answer should be Yes or No.\nAnswer: "
                 )
             else:
                 raise ValueError("Invalid method. Method must be 'sd_debate' or 'cot_debate'.")
 
         elif dataset_key == "date":
-            stem = question
             if method_key == "cot_debate":
                 prompt0 = (
                     "To solve the problem, please think and reason step by step, then answer.\n"
-                    f"Question: {stem}\nAnswer: "
+                    f"Question: {question}\nAnswer: "
                 )
             elif method_key == "sd_debate":
-                prompt0 = f"Question: {stem}\nAnswer: "
+                prompt0 = f"Question: {question}\nAnswer: "
             else:
                 raise ValueError("Invalid method. Method must be 'sd_debate' or 'cot_debate'.")
 
@@ -186,26 +170,42 @@ Answer: """
         # ---------- 保存 log ----------
         log_filename = f'{dataset}_{i}.json'
         log_path = os.path.join(log_dir, log_filename)
-        with open(log_path, 'w', encoding='utf-8') as log_file:
-            json.dump({
+        write_json(log_path, {
+            "meta": {
+                "entry": "self_debate_myself",
+                "dataset": dataset_key,
+                "method": method_key,
+                "sample_index": i,
+                "route": "llm_only",
+                "timestamp_utc": utc_now_iso(),
+                "error_code": None,
+            },
                 "id": id,
                 "question": question,
                 "answer": answers,
                 "correctness": correctness,
                 "log0": history0,
                 "log1": history1,
-            }, log_file, indent=4, ensure_ascii=False)
+            })
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="Baseline script with dataset and start index arguments")
-    parser.add_argument("--dataset", help="Dataset name")
-    parser.add_argument("--start_index", type=int, default=0, help="Start index to begin processing")
-    parser.add_argument("--method", help="sd_debate or cot_debate")
-    parser.add_argument("--data_path", default=None)
-    parser.add_argument("--mock_llm", action="store_true")
-    parser.add_argument("--mock_profile", default=None)
-    args = parser.parse_args()
+    def _main():
+        parser = create_base_parser(
+            "Self-debate baseline entrypoint",
+            dataset_help="mmlu / clutrr / sqa / date",
+            method_help="sd_debate or cot_debate",
+            include_log_dir=True,
+        )
+        args = parser.parse_args()
+        baseline(
+            args.dataset,
+            args.method,
+            args.start_index,
+            data_path=args.data_path,
+            log_dir_override=args.log_dir,
+            mock_llm=args.mock_llm,
+            mock_profile=args.mock_profile,
+        )
 
-    parser.add_argument("--mock_llm", action="store_true")
-    parser.add_argument("--mock_profile", default=None)
+    run_main(_main)
