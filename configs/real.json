@@ -1,0 +1,46 @@
+{
+  "matrix_name": "real",
+  "output_root": "runs",
+  "continue_on_error": true,
+  "base_experiment": {
+    "dataset": "gsm8k",
+    "method": "cot_selfguide",
+    "start_index": 0,
+    "num_samples": 1,
+    "mock_llm": true,
+    "mock_prolog": true
+  },
+  "variants": [
+    {
+      "tag": "baseline_single_round",
+      "description": "baseline（单轮）",
+      "overrides": {
+        "force_task_type": "No"
+      }
+    },
+    {
+      "tag": "abc_no_prolog",
+      "description": "A+B+C（无 Prolog）",
+      "overrides": {
+        "force_task_type": "No"
+      }
+    },
+    {
+      "tag": "abc_prolog_verifier",
+      "description": "A+B+C + Prolog Verifier",
+      "overrides": {
+        "force_task_type": "Yes",
+        "prolog_max_result": 1
+      }
+    },
+    {
+      "tag": "abc_prolog_executor_subset",
+      "description": "A+B+C + Prolog Executor（可限定子集）",
+      "overrides": {
+        "force_task_type": "Yes",
+        "start_index": 0,
+        "num_samples": 1
+      }
+    }
+  ]
+}
