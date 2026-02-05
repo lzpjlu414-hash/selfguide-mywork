@@ -423,7 +423,14 @@ def ai_request(
     )
 
 def build_mock_swipl_output(dataset_key: str, llm_candidate_norm: str) -> dict:
-    answer = llm_candidate_norm or ("True" if dataset_key in ("prontoqa", "proofwriter") else "0")
+    if dataset_key == "gsm8k":
+        digits = re.findall(r"-?\d+", str(llm_candidate_norm or ""))
+        if digits:
+            answer = str(int(digits[-1]) + 1)
+        else:
+            answer = "1"
+    else:
+        answer = llm_candidate_norm or ("True" if dataset_key in ("prontoqa", "proofwriter") else "0")
     raw_payload = json.dumps({
         "schema_version": SWIPL_OUT_SCHEMA_VERSION,
         "ok": True,
@@ -672,6 +679,7 @@ def self_guide_run(
     mock_llm: bool = False,
     mock_profile: Optional[str] = None,
     mock_prolog: bool = False,
+    prolog_role: str = "off",
     meta_interpreter: str = PROLOG_META_INTERPRETER,
     max_depth: int = PROLOG_MAX_DEPTH,
     prolog_max_result: int = PROLOG_MAX_RESULT,
@@ -733,6 +741,7 @@ def self_guide_run(
             "mock_profile": mock_profile,
             "mock_llm": mock_llm,
             "mock_prolog": mock_prolog,
+            "prolog_role": prolog_role,
         }
         config_hash = build_config_hash(base_run_config)
         sample_error_code = "OK"
@@ -774,6 +783,7 @@ def self_guide_run(
         time.sleep(SLEEP_SEC)
 
         # ---------- Round 2: solve with guideline + draft (C) ----------
+        role_mode = (prolog_role or "off").strip().lower()
         contract_round_c = validate_prompt_inputs(
             "round_c_solve",
             {
@@ -815,24 +825,24 @@ def self_guide_run(
             "prolog_max_result": prolog_max_result,
             "meta_interpreter": meta_interpreter,
             "max_depth": max_depth,
-        }  # 默认不启用
+            "role_mode": role_mode,
+        }
         llm_candidate = pred
         llm_candidate_norm = postprocess_pred(dataset_key, llm_candidate)
         final_answer = llm_candidate_norm
         route_reason = None
 
-        # 只对 CaRing 三任务启用 Prolog（你现在 mmlu/sqa/date/clutrr 就不要碰）
         if dataset_key in ("gsm8k", "prontoqa", "proofwriter"):
-            task_type = parse_task_type_from_guideline(guideline)  # 期望返回 Yes/No/Partial
+            task_type = parse_task_type_from_guideline(guideline)
 
             if force_task_type:
                 task_type = force_task_type
 
             prolog_pack["task_type"] = task_type
-            prolog_pack["enabled"] = (task_type in ("Yes", "Partial"))  # ✅ 只有 Yes/Partial 才算启用
+            mode_allows_prolog = role_mode in ("verifier", "executor")
+            prolog_pack["enabled"] = mode_allows_prolog and (task_type in ("Yes", "Partial"))
 
             if prolog_pack["enabled"]:
-                # (1) 生成 Prolog（严格：只输出 Prolog）
                 prolog_prompt = build_prolog_gen_prompt(qblock, guideline)
                 prolog_history = [{"role": "user", "content": prolog_prompt}]
                 prolog_raw = ai_request(
@@ -859,7 +869,6 @@ def self_guide_run(
                     if sample_error_code == "OK" and not prolog_contract.ok:
                         sample_error_code = normalize_error_code(prolog_contract.error_code)
 
-                    # (2) 执行 CaRing 的 call_swipl.py
                     if mock_prolog:
                         swipl_out = build_mock_swipl_output(dataset_key, llm_candidate_norm)
                     else:
@@ -874,69 +883,57 @@ def self_guide_run(
                             tmp_dir=tmp_dir,
                         )
 
-                    # ✅ 强制保证 raw 字段存在（避免你之后解析时抓不到）
                     if "raw" not in swipl_out:
                         swipl_out["raw"] = ""
 
                     prolog_pack["swipl"] = swipl_out
                     prolog_pack["clauses_count"] = len(clauses)
-                    prolog_pack["prolog_max_result"] = prolog_max_result
-                    prolog_pack["meta_interpreter"] = meta_interpreter
-                    prolog_pack["max_depth"] = max_depth
 
-                    # 严格按 schema 解析 Prolog answer + proof
                     swipl_contract = parse_caring_swipl_answer(swipl_out.get("raw"))
                     prolog_pack["swipl_contract"] = swipl_contract
 
-                    prolog_answer = swipl_contract.get("answer")
-                    prolog_proof = swipl_contract.get("proof")
-                    prolog_error_code = swipl_contract.get("error_code")
-                    prolog_schema_ok = (
-                            swipl_contract.get("schema_version") == SWIPL_OUT_SCHEMA_VERSION
-                            and swipl_contract.get("validation_error") is None
-                            and swipl_contract.get("legacy") is False
+                    prolog_answer_raw = swipl_contract.get("answer")
+                    prolog_answer = str(prolog_answer_raw) if prolog_answer_raw is not None else None
+                    prolog_answer_norm = (
+                        postprocess_pred(dataset_key, prolog_answer)
+                        if prolog_answer is not None
+                        else None
                     )
+                    prolog_pack["proof"] = swipl_contract.get("proof")
+                    prolog_pack["error_code"] = swipl_contract.get("error_code")
+                    prolog_pack["prolog_answer_raw"] = prolog_answer
+                    prolog_pack["prolog_answer_norm"] = prolog_answer_norm
 
-                    prolog_pack["prolog_answer_raw"] = str(prolog_answer) if prolog_answer is not None else None
-                    prolog_pack["prolog_answer_norm"] = (
-                        postprocess_pred(dataset_key, str(prolog_answer)) if prolog_answer is not None else None
-                    )
-
-                    prolog_pack["proof"] = prolog_proof
-                    prolog_pack["error_code"] = prolog_error_code
-                    if sample_error_code == "OK" and prolog_error_code:
-                        sample_error_code = normalize_error_code(prolog_error_code)
+                    if sample_error_code == "OK" and prolog_pack["error_code"]:
+                        sample_error_code = normalize_error_code(prolog_pack["error_code"])
 
                     if meta_interpreter in ("with_proof", "iter_deep_with_proof") and swipl_contract.get("ok"):
                         if not prolog_pack["proof"]:
                             prolog_pack["proof"] = "NO_PROOF_RETURNED"
 
-                    if swipl_contract.get("ok") and prolog_answer is not None and prolog_schema_ok:
-                        prolog_answer_norm = prolog_pack["prolog_answer_norm"]
-                        if prolog_answer_norm == llm_candidate_norm:
+                    prolog_schema_ok = (
+                            swipl_contract.get("schema_version") == SWIPL_OUT_SCHEMA_VERSION
+                            and swipl_contract.get("validation_error") is None
+                            and swipl_contract.get("legacy") is False
+                    )
+                    prolog_ok = bool(swipl_contract.get("ok") and prolog_answer_norm is not None and prolog_schema_ok)
+
+                    if prolog_ok:
+                        if role_mode == "executor":
                             route = "executor"
                             final_answer = prolog_answer_norm
-                            route_reason = "Prolog answer matches LLM after normalization."
-                            prolog_pack["route_reason"] = route_reason
+                            route_reason = "Executor mode: final answer forced from Prolog."
                         else:
                             route = "verifier"
-                            final_answer = prolog_answer_norm
-                            route_reason = "Prolog answer differs from LLM after normalization."
-                            prolog_pack["route_reason"] = route_reason
-                            prolog_pack["audit"] = {
-                                "llm_candidate_raw": llm_candidate,
-                                "llm_candidate_norm": llm_candidate_norm,
-                                "prolog_answer_raw": prolog_answer,
-                                "prolog_answer_norm": prolog_answer_norm,
-                                "reason": "Prolog answer differs from LLM; trust Prolog for correction.",
-                            }
+                            final_answer = llm_candidate_norm
+                            route_reason = "Verifier mode: keep LLM final; Prolog used for verification only."
                     else:
                         route = "llm_only"
                         final_answer = llm_candidate_norm
 
                         error_hint = ""
-                        if prolog_error_code:
-                            error_hint = str(prolog_error_code)
+                        if prolog_pack["error_code"]:
+                            error_hint = str(prolog_pack["error_code"])
                         elif swipl_out.get("error"):
                             error_hint = str(swipl_out.get("error"))
                         elif swipl_out.get("stderr"):
@@ -964,23 +961,17 @@ def self_guide_run(
                     route_reason = f"Prolog parse/execute exception: {e}"
                     prolog_pack["fallback_reason"] = route_reason
                     prolog_pack["clauses_count"] = None
-                    prolog_pack["prolog_max_result"] = prolog_max_result
-                    prolog_pack["meta_interpreter"] = meta_interpreter
-                    prolog_pack["max_depth"] = max_depth
             else:
-                route_reason = "Prolog disabled by task_type."
+                if role_mode == "off":
+                    route_reason = "Prolog role is off."
+                else:
+                    route_reason = "Prolog disabled by task_type."
                 prolog_pack["fallback_reason"] = route_reason
                 prolog_pack["clauses_count"] = None
-                prolog_pack["prolog_max_result"] = prolog_max_result
-                prolog_pack["meta_interpreter"] = meta_interpreter
-                prolog_pack["max_depth"] = max_depth
         else:
             route_reason = "Dataset not supported for Prolog."
             prolog_pack["fallback_reason"] = route_reason
             prolog_pack["clauses_count"] = None
-            prolog_pack["prolog_max_result"] = prolog_max_result
-            prolog_pack["meta_interpreter"] = meta_interpreter
-            prolog_pack["max_depth"] = max_depth
 
         add_message("assistant", final_answer, history)
         time.sleep(SLEEP_SEC)
@@ -991,9 +982,13 @@ def self_guide_run(
         draft_correct = judge_correctness(dataset_key, gold, draft) if has_gold else None
         final_correct = judge_correctness(dataset_key, gold, final_answer) if has_gold else None
         draft_final_same = normalize_answer(draft) == normalize_answer(final_answer)
-        prolog_used_for_final = route in ("executor", "verifier")
-        prolog_overruled = route == "verifier"
-        final_modified_by_prolog = prolog_overruled
+        prolog_answer = prolog_pack.get("prolog_answer_norm") if isinstance(prolog_pack, dict) else None
+        prolog_ok = bool(prolog_pack.get("swipl_contract", {}).get("ok")) if isinstance(
+            prolog_pack.get("swipl_contract"), dict) else False
+        prolog_used_for_final = route == "executor"
+        prolog_overruled = bool(route == "executor" and prolog_answer is not None and normalize_answer(
+            llm_candidate_norm) != normalize_answer(prolog_answer))
+        final_modified_by_prolog = bool(route == "executor" and prolog_answer is not None)
         draft_to_final_change_type = compute_change_type(
             draft=draft,
             final=final_answer,
@@ -1002,9 +997,8 @@ def self_guide_run(
         )
 
         draft_prolog_conflict = None
-        prolog_answer_norm = prolog_pack.get("prolog_answer_norm") if isinstance(prolog_pack, dict) else None
-        if prolog_answer_norm is not None:
-            draft_prolog_conflict = normalize_answer(draft) != normalize_answer(prolog_answer_norm)
+        if prolog_answer is not None:
+            draft_prolog_conflict = normalize_answer(draft) != normalize_answer(prolog_answer)
 
 
         # ---------- save log ----------
@@ -1035,6 +1029,7 @@ def self_guide_run(
                 "mock_profile": mock_profile,
                 "mock_llm": mock_llm,
                 "mock_prolog": mock_prolog,
+                "prolog_role": prolog_role,
                 "prolog_max_result": prolog_max_result,
                 "prolog_enabled": prolog_pack.get("enabled", False),
                 "prolog_task_type": prolog_pack.get("task_type"),
@@ -1056,6 +1051,9 @@ def self_guide_run(
             "final_answer": final_answer,
             "draft_final_same": draft_final_same,
             "final_modified_by_prolog": final_modified_by_prolog,
+            "prolog_used": prolog_used_for_final,
+            "prolog_ok": prolog_ok,
+            "prolog_answer": prolog_answer,
             "draft_to_final_change_type": draft_to_final_change_type,
             "draft_correct": draft_correct,
             "final_correct": final_correct,
@@ -1095,6 +1093,7 @@ if __name__ == "__main__":
             default=None,
         )
         parser.add_argument("--mock_prolog", action="store_true", help="mock Prolog execution (no SWI-Prolog call)")
+        parser.add_argument("--prolog_role", choices=("off", "verifier", "executor"), default="off")
         parser.add_argument("--meta_interpreter", default=PROLOG_META_INTERPRETER)
         parser.add_argument("--max_depth", type=int, default=PROLOG_MAX_DEPTH)
         parser.add_argument("--prolog_max_result", type=int, default=PROLOG_MAX_RESULT)
@@ -1115,6 +1114,7 @@ if __name__ == "__main__":
             mock_llm=args.mock_llm,
             mock_profile=args.mock_profile,
             mock_prolog=args.mock_prolog,
+            prolog_role=args.prolog_role,
             meta_interpreter=args.meta_interpreter,
             max_depth=args.max_depth,
             prolog_max_result=args.prolog_max_result,

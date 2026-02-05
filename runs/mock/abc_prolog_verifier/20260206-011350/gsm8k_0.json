@@ -30,6 +30,7 @@
     "mock_profile": null,
     "mock_llm": true,
     "mock_prolog": true,
+    "prolog_role": "verifier",
     "prolog_max_result": 1,
     "prolog_enabled": true,
     "prolog_task_type": "Yes",
@@ -37,7 +38,7 @@
     "max_depth": 25,
     "debug": false,
     "keep_tmp": false,
-    "config_hash": "520873a7db35"
+    "config_hash": "2dfa4c727b38"
   },
   "guideline": "task_type: Partial\nschema: |\n  - Use lowercase constants for gsm8k entities.\n  - Keep predicate names consistent (snake_case).\n  - Represent Unknown with explicit 'unknown' atoms.\nquery_goal: |\n  - Derive the final answer in the required output format.\n  - Ensure the query targets only one concrete result.\nfallback: |\n  - If parsing fails, answer using the last known consistent step.\n  - If multiple answers, pick the most specific one.",
   "gold": "Janet sells 16 - 3 - 4 = <<16-3-4=9>>9 duck eggs a day.\nShe makes 9 * 2 = $<<9*2=18>>18 every day at the farmer’s market.\n#### 18",
@@ -51,6 +52,9 @@
   "final_answer": "446",
   "draft_final_same": false,
   "final_modified_by_prolog": false,
+  "prolog_used": false,
+  "prolog_ok": true,
+  "prolog_answer": "447",
   "draft_to_final_change_type": "revise",
   "draft_correct": "False",
   "final_correct": "False",
@@ -69,13 +73,14 @@
       "content": "446"
     }
   ],
-  "route": "executor",
+  "route": "verifier",
   "prolog": {
     "enabled": true,
     "task_type": "Yes",
     "prolog_max_result": 1,
     "meta_interpreter": "iter_deep_with_proof",
     "max_depth": 25,
+    "role_mode": "verifier",
     "prolog_raw": "fact(ans4).\nanswer(X) :- fact(X).\nanswer(X).\n",
     "clauses": [
       "fact(ans4).",
@@ -92,7 +97,7 @@
       "ok": true,
       "error": null,
       "error_code": null,
-      "raw": "{\"schema_version\": \"1.0\", \"ok\": true, \"answer\": \"446\", \"proof\": \"mock_proof\", \"error_code\": null, \"raw\": \"\"}",
+      "raw": "{\"schema_version\": \"1.0\", \"ok\": true, \"answer\": \"447\", \"proof\": \"mock_proof\", \"error_code\": null, \"raw\": \"\"}",
       "stdout": "",
       "stderr": "",
       "returncode": 0,
@@ -102,22 +107,21 @@
     "swipl_contract": {
       "schema_version": "1.0",
       "ok": true,
-      "answer": "446",
+      "answer": "447",
       "proof": "mock_proof",
       "error_code": null,
       "raw": "",
       "legacy": false,
       "validation_error": null
     },
-    "prolog_answer_raw": "446",
-    "prolog_answer_norm": "446",
     "proof": "mock_proof",
     "error_code": null,
-    "route_reason": "Prolog answer matches LLM after normalization."
+    "prolog_answer_raw": "447",
+    "prolog_answer_norm": "447"
   },
-  "route_reason": "Prolog answer matches LLM after normalization.",
+  "route_reason": "Verifier mode: keep LLM final; Prolog used for verification only.",
   "error_code": "OK",
-  "config_hash": "520873a7db35",
+  "config_hash": "2dfa4c727b38",
   "contracts": {
     "prompt": {
       "version": "p0.v1",

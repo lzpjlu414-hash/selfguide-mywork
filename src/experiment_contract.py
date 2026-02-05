@@ -59,6 +59,7 @@ DEFAULTS = {
     "meta_interpreter": "iter_deep_with_proof",
     "max_depth": 25,
     "prolog_max_result": 20,
+    "prolog_role": "off",
 }
 
 
@@ -76,6 +77,7 @@ def build_experiment_parser() -> ArgumentParser:
     parser.add_argument("--mock_llm", action="store_true")
     parser.add_argument("--mock_profile", default=None)
     parser.add_argument("--mock_prolog", action="store_true")
+    parser.add_argument("--prolog_role", choices=("off", "verifier", "executor"), default=DEFAULTS["prolog_role"])
 
     parser.add_argument("--force_task_type", choices=("Yes", "No", "Partial"), default=None)
     parser.add_argument("--meta_interpreter", default=DEFAULTS["meta_interpreter"])
@@ -97,6 +99,8 @@ def validate_contract(args: Namespace) -> None:
         raise ValueError("max_depth must be > 0")
     if args.prolog_max_result <= 0:
         raise ValueError("prolog_max_result must be > 0")
+    if args.prolog_role not in ("off", "verifier", "executor"):
+        raise ValueError("prolog_role must be one of: off, verifier, executor")
 
     method_spec = METHOD_REGISTRY[args.method]
     if args.dataset not in method_spec.supported_datasets:

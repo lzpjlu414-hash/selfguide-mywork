@@ -16,10 +16,11 @@ from src.summarize_logs import summarize_logs
 def _iter_variant_dirs(matrix_dir: Path) -> list[tuple[str, Path]]:
     variants: list[tuple[str, Path]] = []
     for variant_dir in sorted(p for p in matrix_dir.iterdir() if p.is_dir()):
-        run_dirs = sorted([p for p in variant_dir.iterdir() if p.is_dir()])
+        run_dirs = [p for p in variant_dir.iterdir() if p.is_dir()]
         if not run_dirs:
             continue
-        variants.append((variant_dir.name, run_dirs[-1]))
+        latest = max(run_dirs, key=lambda p: p.stat().st_mtime)
+        variants.append((variant_dir.name, latest))
     return variants
 
 

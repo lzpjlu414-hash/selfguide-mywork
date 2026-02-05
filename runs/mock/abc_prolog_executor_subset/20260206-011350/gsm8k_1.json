@@ -30,6 +30,7 @@
     "mock_profile": null,
     "mock_llm": true,
     "mock_prolog": true,
+    "prolog_role": "executor",
     "prolog_max_result": 20,
     "prolog_enabled": true,
     "prolog_task_type": "Yes",
@@ -37,7 +38,7 @@
     "max_depth": 25,
     "debug": false,
     "keep_tmp": false,
-    "config_hash": "b541201f9e10"
+    "config_hash": "94511c3eb72b"
   },
   "guideline": "task_type: Yes\nschema: |\n  - Use lowercase constants for gsm8k entities.\n  - Keep predicate names consistent (snake_case).\n  - Represent Unknown with explicit 'unknown' atoms.\nquery_goal: |\n  - Derive the final answer in the required output format.\n  - Ensure the query targets only one concrete result.\nfallback: |\n  - If parsing fails, answer using the last known consistent step.\n  - If multiple answers, pick the most specific one.",
   "gold": "It takes 2/2=<<2/2=1>>1 bolt of white fiber\nSo the total amount of fabric is 2+1=<<2+1=3>>3 bolts of fabric\n#### 3",
@@ -48,13 +49,16 @@
   "pred": "922",
   "llm_candidate": "922",
   "llm_candidate_norm": "922",
-  "final_answer": "922",
+  "final_answer": "923",
   "draft_final_same": false,
-  "final_modified_by_prolog": false,
-  "draft_to_final_change_type": "revise",
+  "final_modified_by_prolog": true,
+  "prolog_used": true,
+  "prolog_ok": true,
+  "prolog_answer": "923",
+  "draft_to_final_change_type": "corrected_by_prolog",
   "draft_correct": "False",
   "final_correct": "False",
-  "prolog_overruled": false,
+  "prolog_overruled": true,
   "draft_prolog_conflict": true,
   "correctness": "False",
   "round1_guideline_prompt": "You are a GuidelineGenerator.\nYou MUST NOT solve the question.\n\nOutput YAML with EXACT keys:\ntask_type: Yes/No/Partial  # whether to use Prolog\nschema: |                 # naming, predicates, negation/unknown conventions\nquery_goal: |             # what the Prolog query should prove/return\nfallback: |               # what to do on parse error/timeout/multiple answers\n\nRules:\n1) DO NOT output any final answer.\n2) schema MUST mention: constants naming, predicate set, negation/Unknown convention.\n3) query_goal MUST be specific (what to prove/return).\n4) solver output constraint: Output ONLY the final answer. Do NOT add explanation.\n\nA robe takes 2 bolts of blue fiber and half that much white fiber.  How many bolts in total does it take?\n\nYAML:",
@@ -66,7 +70,7 @@
     },
     {
       "role": "assistant",
-      "content": "922"
+      "content": "923"
     }
   ],
   "route": "executor",
@@ -76,6 +80,7 @@
     "prolog_max_result": 20,
     "meta_interpreter": "iter_deep_with_proof",
     "max_depth": 25,
+    "role_mode": "executor",
     "prolog_raw": "fact(ans0).\nanswer(X) :- fact(X).\nanswer(X).\n",
     "clauses": [
       "fact(ans0).",
@@ -92,7 +97,7 @@
       "ok": true,
       "error": null,
       "error_code": null,
-      "raw": "{\"schema_version\": \"1.0\", \"ok\": true, \"answer\": \"922\", \"proof\": \"mock_proof\", \"error_code\": null, \"raw\": \"\"}",
+      "raw": "{\"schema_version\": \"1.0\", \"ok\": true, \"answer\": \"923\", \"proof\": \"mock_proof\", \"error_code\": null, \"raw\": \"\"}",
       "stdout": "",
       "stderr": "",
       "returncode": 0,
@@ -102,22 +107,21 @@
     "swipl_contract": {
       "schema_version": "1.0",
       "ok": true,
-      "answer": "922",
+      "answer": "923",
       "proof": "mock_proof",
       "error_code": null,
       "raw": "",
       "legacy": false,
       "validation_error": null
     },
-    "prolog_answer_raw": "922",
-    "prolog_answer_norm": "922",
     "proof": "mock_proof",
     "error_code": null,
-    "route_reason": "Prolog answer matches LLM after normalization."
+    "prolog_answer_raw": "923",
+    "prolog_answer_norm": "923"
   },
-  "route_reason": "Prolog answer matches LLM after normalization.",
+  "route_reason": "Executor mode: final answer forced from Prolog.",
   "error_code": "OK",
-  "config_hash": "b541201f9e10",
+  "config_hash": "94511c3eb72b",
   "contracts": {
     "prompt": {
       "version": "p0.v1",

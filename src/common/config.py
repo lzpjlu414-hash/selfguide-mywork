@@ -24,6 +24,7 @@ DEFAULT_CONFIG_HASH_FIELDS = (
     "mock_profile",
     "mock_llm",
     "mock_prolog",
+    "prolog_role",
 )
 
 

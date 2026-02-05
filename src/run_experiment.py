@@ -40,6 +40,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         mock_llm=args.mock_llm,
         mock_profile=args.mock_profile,
         mock_prolog=args.mock_prolog,
+        prolog_role=args.prolog_role,
         meta_interpreter=args.meta_interpreter,
         max_depth=args.max_depth,
         prolog_max_result=args.prolog_max_result,

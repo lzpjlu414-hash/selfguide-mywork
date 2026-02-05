@@ -15,22 +15,35 @@
     {
       "tag": "baseline_single_round",
       "description": "baseline（单轮）",
-      "overrides": {"force_task_type": "No"}
+      "overrides": {
+        "force_task_type": "No",
+        "prolog_role": "off"
+      }
     },
     {
       "tag": "abc_no_prolog",
       "description": "A+B+C（无 Prolog）",
-      "overrides": {"force_task_type": "No"}
+      "overrides": {
+        "force_task_type": "No",
+        "prolog_role": "off"
+      }
     },
     {
       "tag": "abc_prolog_verifier",
       "description": "A+B+C + Prolog Verifier",
-      "overrides": {"force_task_type": "Yes", "prolog_max_result": 1}
+      "overrides": {
+        "force_task_type": "Yes",
+        "prolog_max_result": 1,
+        "prolog_role": "verifier"
+      }
     },
     {
       "tag": "abc_prolog_executor_subset",
       "description": "A+B+C + Prolog Executor（可限定子集）",
-      "overrides": {"force_task_type": "Yes"}
+      "overrides": {
+        "force_task_type": "Yes",
+        "prolog_role": "executor"
+      }
     }
   ]
 }

@@ -41,12 +41,12 @@ DEFAULT_VARIANTS: tuple[MatrixVariant, ...] = (
     MatrixVariant(
         tag="abc_prolog_verifier",
         description="A+B+C + Prolog Verifier",
-        overrides={"force_task_type": "Yes", "prolog_max_result": 1},
+        overrides={"force_task_type": "Yes", "prolog_max_result": 1, "prolog_role": "verifier"},
     ),
     MatrixVariant(
         tag="abc_prolog_executor",
         description="A+B+C + Prolog Executor（可限定子集）",
-        overrides={"force_task_type": "Yes"},
+        overrides={"force_task_type": "Yes", "prolog_role": "executor"},
     ),
 )
 
@@ -141,6 +141,7 @@ def _build_cli_args(expanded: dict[str, Any], run_dir: Path) -> list[str]:
         "meta_interpreter",
         "max_depth",
         "prolog_max_result",
+        "prolog_role",
         "tmp_dir",
     )
     for key in option_fields:
