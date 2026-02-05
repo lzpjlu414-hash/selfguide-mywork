@@ -4,7 +4,10 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ModuleNotFoundError:  # pragma: no cover - optional dependency for mock mode
+    OpenAI = Any  # type: ignore[assignment]
 
 DEBUG = os.getenv("LLM_DEBUG", "").lower() in ("1", "true", "yes")
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -42,6 +45,8 @@ def _coerce_int(value: Optional[int]) -> Optional[int]:
 
 
 def get_client(base_url: Optional[str] = None, timeout: Optional[float] = 30.0) -> OpenAI:
+    if OpenAI is Any:
+        raise RuntimeError("openai package is required when mock_llm is disabled")
     resolved_base = _resolve_base_url(base_url) or ""
     timeout_value = _coerce_float(timeout)
     key = (resolved_base, timeout_value)

@@ -9,7 +9,6 @@ from glob import glob
 from typing import Optional, Tuple, List
 
 
-from tqdm import tqdm
 from argparse import ArgumentParser
 
 from pathlib import Path
@@ -637,10 +636,7 @@ def self_guide_run(
 
     print(f"Self-Guide running: dataset={dataset_key}, method={method_key}, start_index={start_index}")
     end = min(len(samples), start_index + num_samples)
-    for i, line in tqdm(
-            enumerate(samples[start_index:end], start=start_index),
-            total=end - start_index,
-    ):
+    for i, line in enumerate(samples[start_index:end], start=start_index):
         data = line
         sample_id = data.get("id", i)
         gold = data.get("answer", "")
