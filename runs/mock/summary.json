@@ -2,7 +2,7 @@
   "matrix_dir": "runs\\mock",
   "variants": {
     "abc_no_prolog": {
-      "run_dir": "runs\\mock\\abc_no_prolog\\20260206-011350",
+      "run_dir": "runs\\mock\\abc_no_prolog\\20260206-013324",
       "N": 2,
       "accuracy": 0.0,
       "route_distribution": {
@@ -30,7 +30,7 @@
       "schema_error_rate": 0.0
     },
     "abc_prolog_executor_subset": {
-      "run_dir": "runs\\mock\\abc_prolog_executor_subset\\20260206-011350",
+      "run_dir": "runs\\mock\\abc_prolog_executor_subset\\20260206-013324",
       "N": 2,
       "accuracy": 0.0,
       "route_distribution": {
@@ -60,7 +60,7 @@
       "schema_error_rate": 0.0
     },
     "abc_prolog_verifier": {
-      "run_dir": "runs\\mock\\abc_prolog_verifier\\20260206-011350",
+      "run_dir": "runs\\mock\\abc_prolog_verifier\\20260206-013324",
       "N": 2,
       "accuracy": 0.0,
       "route_distribution": {
@@ -85,12 +85,12 @@
       "copy_rate": 0.0,
       "copy_and_wrong_rate": 0.0,
       "corrected_rate": 0.0,
-      "prolog_overrule_rate": 1.0,
+      "prolog_overrule_rate": 0.0,
       "fallback_rate": 0.0,
       "schema_error_rate": 0.0
     },
     "baseline_single_round": {
-      "run_dir": "runs\\mock\\baseline_single_round\\20260206-011350",
+      "run_dir": "runs\\mock\\baseline_single_round\\20260206-013324",
       "N": 2,
       "accuracy": 0.0,
       "route_distribution": {

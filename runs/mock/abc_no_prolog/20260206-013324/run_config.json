@@ -1,9 +1,9 @@
 {
   "matrix_name": "mock",
-  "variant_tag": "abc_prolog_executor_subset",
-  "variant_description": "A+B+C + Prolog Executor（可限定子集）",
-  "timestamp": "20260206-011350",
-  "config_hash": "1f43833f32c05f0c",
+  "variant_tag": "abc_no_prolog",
+  "variant_description": "A+B+C（无 Prolog）",
+  "timestamp": "20260206-013324",
+  "config_hash": "e4b99442a3a16e1a",
   "expanded_config": {
     "dataset": "gsm8k",
     "method": "cot_selfguide",
@@ -12,8 +12,8 @@
     "mock_llm": true,
     "mock_prolog": true,
     "num_samples": 2,
-    "force_task_type": "Yes",
-    "prolog_role": "executor"
+    "force_task_type": "No",
+    "prolog_role": "off"
   },
   "cli_args": [
     "--method",
@@ -25,11 +25,11 @@
     "--num_samples",
     "2",
     "--log_dir",
-    "runs\\mock\\abc_prolog_executor_subset\\20260206-011350",
+    "runs\\mock\\abc_no_prolog\\20260206-013324",
     "--force_task_type",
-    "Yes",
+    "No",
     "--prolog_role",
-    "executor",
+    "off",
     "--mock_llm",
     "--mock_prolog"
   ]

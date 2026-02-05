@@ -985,14 +985,14 @@ def self_guide_run(
         prolog_answer = prolog_pack.get("prolog_answer_norm") if isinstance(prolog_pack, dict) else None
         prolog_ok = bool(prolog_pack.get("swipl_contract", {}).get("ok")) if isinstance(
             prolog_pack.get("swipl_contract"), dict) else False
-        prolog_used_for_final = route == "executor"
+        prolog_used = bool(route in ("verifier", "executor"))
         prolog_overruled = bool(route == "executor" and prolog_answer is not None and normalize_answer(
             llm_candidate_norm) != normalize_answer(prolog_answer))
         final_modified_by_prolog = bool(route == "executor" and prolog_answer is not None)
         draft_to_final_change_type = compute_change_type(
             draft=draft,
             final=final_answer,
-            prolog_used=prolog_used_for_final,
+            prolog_used=prolog_used,
             prolog_overruled=prolog_overruled,
         )
 
@@ -1051,7 +1051,7 @@ def self_guide_run(
             "final_answer": final_answer,
             "draft_final_same": draft_final_same,
             "final_modified_by_prolog": final_modified_by_prolog,
-            "prolog_used": prolog_used_for_final,
+            "prolog_used": prolog_used,
             "prolog_ok": prolog_ok,
             "prolog_answer": prolog_answer,
             "draft_to_final_change_type": draft_to_final_change_type,

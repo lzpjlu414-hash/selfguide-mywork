@@ -125,10 +125,9 @@ def summarize_logs(log_dir: Path) -> dict:
         if draft_correct is False and final_correct is True:
             corrected_count += 1
 
-        draft_prolog_conflict = to_bool(data.get("draft_prolog_conflict"))
-        if draft_prolog_conflict is None:
-            draft_prolog_conflict = to_bool(data.get("prolog_overruled"))
-        if draft_prolog_conflict:
+        prolog_used = to_bool(data.get("prolog_used"))
+        prolog_overruled = to_bool(data.get("prolog_overruled"))
+        if prolog_used and prolog_overruled:
             prolog_overrule_count += 1
 
     accuracy = correct / total

@@ -52,7 +52,7 @@
   "final_answer": "446",
   "draft_final_same": false,
   "final_modified_by_prolog": false,
-  "prolog_used": false,
+  "prolog_used": true,
   "prolog_ok": true,
   "prolog_answer": "447",
   "draft_to_final_change_type": "revise",

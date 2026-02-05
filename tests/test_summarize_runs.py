@@ -54,3 +54,21 @@ def test_summarize_matrix_prefers_most_recent_run_dir(tmp_path: Path) -> None:
 
         rows, _ = summarize_matrix(matrix_dir)
         assert rows[0]["route_distribution"] == "verifier:1"
+
+def test_prolog_overrule_rate_requires_prolog_used(tmp_path: Path) -> None:
+            matrix_dir = tmp_path / "mock"
+            run_dir = matrix_dir / "abc_prolog_verifier" / "20260101-010101"
+            run_dir.mkdir(parents=True)
+
+            logs = [
+                {"correctness": True, "route": "verifier", "error_code": "OK", "config_hash": "h1",
+                 "prolog": {"enabled": True}, "prolog_overruled": True},
+                {"correctness": True, "route": "executor", "error_code": "OK", "config_hash": "h1",
+                 "prolog": {"enabled": True}, "prolog_used": True, "prolog_overruled": True},
+            ]
+            for idx, log in enumerate(logs):
+                (run_dir / f"gsm8k_{idx}.json").write_text(json.dumps(log), encoding="utf-8")
+
+            rows, summary = summarize_matrix(matrix_dir)
+            assert rows[0]["prolog_overrule_rate"] == 0.5
+            assert summary["variants"]["abc_prolog_verifier"]["prolog_overrule_rate"] == 0.5
