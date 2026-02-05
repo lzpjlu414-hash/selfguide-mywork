@@ -6,7 +6,7 @@ import re
 import sys
 import uuid
 from glob import glob
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Any, Dict
 
 
 
@@ -41,56 +41,90 @@ CARING_TASK_DIR = {
     "proofwriter": Path(__file__).resolve().parents[1] / "caring" / "tasks" / "proofwriter",
 }
 
-def parse_caring_swipl_answer(raw: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    尝试从 CaRing call_swipl 输出(out.json内容)里提取:
-      - ans: Prolog 结论/答案（字符串）
-      - proof: proof/trace（字符串，可为空）
-    注意：不同 CaRing 版本 out.json 字段名可能不同，所以这里做“容错式”提取。
-    你跑一条样本后，看 prolog.swipl.raw 实际 keys，再把 KEY_CANDIDATES 精简/改准即可。
-    """
-    raw = (raw or "").strip()
-    if not raw:
-        return None, None
+SWIPL_OUT_SCHEMA_VERSION = "1.0"
+SWIPL_REQUIRED_KEYS = {
+    "schema_version",
+    "ok",
+    "answer",
+    "proof",
+    "error_code",
+}
 
-    # 1) 先尝试当 JSON 解析
+
+def parse_caring_swipl_answer(raw: str) -> Dict[str, Any]:
+    """严格按 schema_version 解析 CaRing call_swipl 的 out.json。"""
+    parsed: Dict[str, Any] = {
+        "schema_version": SWIPL_OUT_SCHEMA_VERSION,
+        "ok": False,
+        "answer": None,
+        "proof": None,
+        "error_code": "SCHEMA_INVALID_JSON",
+        "raw": raw or "",
+        "legacy": False,
+        "validation_error": None,
+    }
+    body = (raw or "").strip()
+    if not body:
+        parsed["error_code"] = "EMPTY_SWIPL_OUTPUT"
+        return parsed
+
     try:
-        obj = json.loads(raw)
+        obj = json.loads(body)
     except Exception:
-        # 不是 JSON：就把 raw 当答案（proof 空）
-        return raw.splitlines()[0].strip(), None
+        parsed["error_code"] = "SCHEMA_INVALID_JSON"
+        return parsed
 
-    if isinstance(obj, list):
-        obj = obj[0] if obj else {}
+    if not isinstance(obj, dict):
+        parsed["error_code"] = "SCHEMA_EXPECTED_OBJECT"
+        return parsed
 
-    # 2) 从 JSON 里找答案字段
-    KEY_CANDIDATES_ANS = ["answer", "pred", "result", "final_answer", "output", "answers"]
-    ans = None
-    for k in KEY_CANDIDATES_ANS:
-        if k in obj and obj[k] is not None:
-            v = obj[k]
-            if isinstance(v, list):
-                ans = str(v[0]) if v else None
-            else:
-                ans = str(v)
-            break
+    schema_version = obj.get("schema_version")
+    if schema_version is None:
+        parsed["schema_version"] = "LEGACY_SCHEMA"
+        parsed["error_code"] = "LEGACY_SCHEMA"
+        parsed["legacy"] = True
+        return parsed
 
-    # 3) 找 proof/trace 字段
-    KEY_CANDIDATES_PROOF = ["proof", "trace", "Proof", "proofs", "traces"]
-    proof = None
-    for k in KEY_CANDIDATES_PROOF:
-        if k in obj and obj[k] is not None:
-            v = obj[k]
-            if isinstance(v, list):
-                if not v:
-                    proof = None
-                else:
-                    proof = "\n".join(str(item) for item in v if str(item).strip())
-            else:
-                proof = str(v)
-            break
+    parsed["schema_version"] = schema_version
+    if schema_version != SWIPL_OUT_SCHEMA_VERSION:
+        parsed["error_code"] = "SCHEMA_VERSION_UNSUPPORTED"
+        return parsed
 
-    return (ans.strip() if ans else None), (proof.strip() if proof else None)
+    missing = sorted(k for k in SWIPL_REQUIRED_KEYS if k not in obj)
+    if missing:
+        parsed["error_code"] = "SCHEMA_MISSING_REQUIRED_KEYS"
+        parsed["validation_error"] = f"missing keys: {', '.join(missing)}"
+        return parsed
+
+    if not isinstance(obj.get("ok"), bool):
+        parsed["error_code"] = "SCHEMA_TYPE_MISMATCH"
+        parsed["validation_error"] = "ok must be bool"
+        return parsed
+
+    answer = obj.get("answer")
+    if answer is not None and not isinstance(answer, (str, int, float)):
+        parsed["error_code"] = "SCHEMA_TYPE_MISMATCH"
+        parsed["validation_error"] = "answer must be string/number/null"
+        return parsed
+
+    proof = obj.get("proof")
+    if proof is not None and not isinstance(proof, str):
+        parsed["error_code"] = "SCHEMA_TYPE_MISMATCH"
+        parsed["validation_error"] = "proof must be string/null"
+        return parsed
+
+    error_code = obj.get("error_code")
+    if error_code is not None and not isinstance(error_code, str):
+        parsed["error_code"] = "SCHEMA_TYPE_MISMATCH"
+        parsed["validation_error"] = "error_code must be string/null"
+        return parsed
+
+    parsed["ok"] = bool(obj["ok"])
+    parsed["answer"] = answer
+    parsed["proof"] = proof
+    parsed["error_code"] = error_code
+    parsed["raw"] = obj.get("raw") if "raw" in obj else parsed["raw"]
+    return parsed
 
 
 def parse_task_type_from_guideline(guideline: str) -> str:
@@ -224,6 +258,7 @@ def run_caring_call_swipl(
         result = {
             "ok": False,
             "error": "call_swipl timeout",
+            "error_code": "SWIPL_TIMEOUT",
             "raw": "",
             "stdout": (e.stdout or "")[-2000:] if hasattr(e, "stdout") else "",
             "stderr": (e.stderr or "")[-2000:] if hasattr(e, "stderr") else "",
@@ -249,19 +284,33 @@ def run_caring_call_swipl(
     raw = out_path.read_text(encoding="utf-8").strip() if out_path.exists() else ""
 
     ok = (p.returncode == 0) and (raw != "")
+    error_code = None
     if not ok:
         if not out_path.exists():
             err = f"out.json not created: {out_path}\n" + (p.stderr or p.stdout or "")
+            error_code = "OUT_JSON_NOT_CREATED"
         elif raw == "":
             err = f"out.json is empty: {out_path}\n" + (p.stderr or p.stdout or "")
+            error_code = "OUT_JSON_NOT_CREATED"
         else:
             err = (p.stderr or p.stdout or "unknown error").strip()
+            error_code = "SWIPL_CALL_FAILED"
     else:
         err = None
+        try:
+            payload = json.loads(raw)
+            if isinstance(payload, dict):
+                error_code = payload.get("error_code")
+                if payload.get("ok") is False:
+                    ok = False
+        except Exception:
+            error_code = "SCHEMA_INVALID_JSON"
+            ok = False
 
     result = {
         "ok": ok,
         "error": err,
+        "error_code": error_code,
         "raw": raw,
         "stdout": (p.stdout or "")[-2000:],
         "stderr": (p.stderr or "")[-2000:],
@@ -361,10 +410,18 @@ def ai_request(
 
 def build_mock_swipl_output(dataset_key: str, llm_candidate_norm: str) -> dict:
     answer = llm_candidate_norm or ("True" if dataset_key in ("prontoqa", "proofwriter") else "0")
-    raw_payload = json.dumps({"answer": answer, "proofs": ["mock_proof"]})
+    raw_payload = json.dumps({
+        "schema_version": SWIPL_OUT_SCHEMA_VERSION,
+        "ok": True,
+        "answer": answer,
+        "proof": "mock_proof",
+        "error_code": None,
+        "raw": "",
+    })
     return {
         "ok": True,
         "error": None,
+        "error_code": None,
         "raw": raw_payload,
         "stdout": "",
         "stderr": "",
@@ -759,31 +816,32 @@ def self_guide_run(
                     prolog_pack["meta_interpreter"] = meta_interpreter
                     prolog_pack["max_depth"] = max_depth
 
-                    # 解析 Prolog answer + proof
-                    prolog_answer, prolog_proof = parse_caring_swipl_answer(swipl_out.get("raw"))
-                    prolog_pack["prolog_answer_raw"] = prolog_answer
-                    prolog_pack["prolog_answer_norm"] = (
-                        postprocess_pred(dataset_key, prolog_answer) if prolog_answer else None
+                    # 严格按 schema 解析 Prolog answer + proof
+                    swipl_contract = parse_caring_swipl_answer(swipl_out.get("raw"))
+                    prolog_pack["swipl_contract"] = swipl_contract
+
+                    prolog_answer = swipl_contract.get("answer")
+                    prolog_proof = swipl_contract.get("proof")
+                    prolog_error_code = swipl_contract.get("error_code")
+                    prolog_schema_ok = (
+                            swipl_contract.get("schema_version") == SWIPL_OUT_SCHEMA_VERSION
+                            and swipl_contract.get("validation_error") is None
+                            and swipl_contract.get("legacy") is False
                     )
-                    proof_list = []
-                    raw_obj = None
-                    try:
-                        raw_obj = json.loads(swipl_out.get("raw", "") or "")
-                    except Exception:
-                        raw_obj = None
-                    if isinstance(raw_obj, dict) and isinstance(raw_obj.get("proofs"), list):
-                        proof_list = [str(p) for p in raw_obj.get("proofs") if str(p).strip()]
-                    prolog_pack["proofs"] = proof_list
+
+                    prolog_pack["prolog_answer_raw"] = str(prolog_answer) if prolog_answer is not None else None
+                    prolog_pack["prolog_answer_norm"] = (
+                        postprocess_pred(dataset_key, str(prolog_answer)) if prolog_answer is not None else None
+                    )
+
                     prolog_pack["proof"] = prolog_proof
+                    prolog_pack["error_code"] = prolog_error_code
 
-                    if meta_interpreter in ("with_proof", "iter_deep_with_proof") and swipl_out.get("ok"):
+                    if meta_interpreter in ("with_proof", "iter_deep_with_proof") and swipl_contract.get("ok"):
                         if not prolog_pack["proof"]:
-                            if proof_list:
-                                prolog_pack["proof"] = "\n".join(proof_list)
-                            else:
-                                prolog_pack["proof"] = "NO_PROOF_RETURNED"
+                            prolog_pack["proof"] = "NO_PROOF_RETURNED"
 
-                    if swipl_out.get("ok") and prolog_answer:
+                    if swipl_contract.get("ok") and prolog_answer is not None and prolog_schema_ok:
                         prolog_answer_norm = prolog_pack["prolog_answer_norm"]
                         if prolog_answer_norm == llm_candidate_norm:
                             route = "executor"
@@ -807,13 +865,15 @@ def self_guide_run(
                         final_answer = llm_candidate_norm
 
                         error_hint = ""
-                        if swipl_out.get("error"):
+                        if prolog_error_code:
+                            error_hint = str(prolog_error_code)
+                        elif swipl_out.get("error"):
                             error_hint = str(swipl_out.get("error"))
                         elif swipl_out.get("stderr"):
                             error_hint = str(swipl_out.get("stderr"))
                         error_hint = error_hint[:200]
 
-                        route_reason = "Prolog failed or no answer parsed."
+                        route_reason = "Prolog failed, schema invalid, or no answer parsed."
                         if error_hint:
                             route_reason = f"{route_reason} {error_hint}"
                         prolog_pack["fallback_reason"] = route_reason
@@ -822,6 +882,7 @@ def self_guide_run(
                     prolog_pack["swipl"] = {
                         "ok": False,
                         "error": str(e),
+                        "error_code": "SELF_GUIDE_SWIPL_EXCEPTION",
                         "raw": "",
                         "cmd": None,
                         "returncode": None,
