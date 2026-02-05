@@ -1,0 +1,32 @@
+{
+  "matrix_name": "real",
+  "variant_tag": "baseline_single_round",
+  "variant_description": "baseline（单轮）",
+  "timestamp": "20260206-001110",
+  "config_hash": "92f8ff64b15b1feb",
+  "expanded_config": {
+    "dataset": "gsm8k",
+    "method": "cot_selfguide",
+    "start_index": 0,
+    "num_samples": 1,
+    "mock_llm": true,
+    "mock_prolog": true,
+    "force_task_type": "No"
+  },
+  "cli_args": [
+    "--method",
+    "cot_selfguide",
+    "--dataset",
+    "gsm8k",
+    "--start_index",
+    "0",
+    "--num_samples",
+    "1",
+    "--log_dir",
+    "runs\\real\\baseline_single_round\\20260206-001110",
+    "--force_task_type",
+    "No",
+    "--mock_llm",
+    "--mock_prolog"
+  ]
+}

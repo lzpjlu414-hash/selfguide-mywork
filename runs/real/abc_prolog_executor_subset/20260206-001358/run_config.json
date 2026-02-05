@@ -1,0 +1,32 @@
+{
+  "matrix_name": "real",
+  "variant_tag": "abc_prolog_executor_subset",
+  "variant_description": "A+B+C + Prolog Executor（可限定子集）",
+  "timestamp": "20260206-001358",
+  "config_hash": "3113fdb828e634e9",
+  "expanded_config": {
+    "dataset": "gsm8k",
+    "method": "cot_selfguide",
+    "start_index": 0,
+    "num_samples": 1,
+    "mock_llm": true,
+    "mock_prolog": true,
+    "force_task_type": "Yes"
+  },
+  "cli_args": [
+    "--method",
+    "cot_selfguide",
+    "--dataset",
+    "gsm8k",
+    "--start_index",
+    "0",
+    "--num_samples",
+    "1",
+    "--log_dir",
+    "runs\\real\\abc_prolog_executor_subset\\20260206-001358",
+    "--force_task_type",
+    "Yes",
+    "--mock_llm",
+    "--mock_prolog"
+  ]
+}
