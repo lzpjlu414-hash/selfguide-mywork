@@ -53,6 +53,8 @@ def summarize_logs(log_dir: Path) -> dict:
             "copy_and_wrong_rate": 0.0,
             "corrected_rate": 0.0,
             "prolog_overrule_rate": 0.0,
+            "guideline_schema_valid_rate": 0.0,
+            "guideline_retry_avg": 0.0,
         }
 
     correct = 0
@@ -71,6 +73,8 @@ def summarize_logs(log_dir: Path) -> dict:
     copy_and_wrong_count = 0
     corrected_count = 0
     prolog_overrule_count = 0
+    guideline_schema_valid_count = 0
+    guideline_retry_total = 0
 
     for path in logs:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -130,6 +134,14 @@ def summarize_logs(log_dir: Path) -> dict:
         if prolog_used and prolog_overruled:
             prolog_overrule_count += 1
 
+        guideline_schema_valid = to_bool(data.get("guideline_schema_valid"))
+        if guideline_schema_valid:
+            guideline_schema_valid_count += 1
+
+        retry_count = data.get("guideline_retry_count", 0)
+        if isinstance(retry_count, int) and retry_count >= 0:
+            guideline_retry_total += retry_count
+
     accuracy = correct / total
     return {
         "N": total,
@@ -149,4 +161,6 @@ def summarize_logs(log_dir: Path) -> dict:
         "copy_and_wrong_rate": (copy_and_wrong_count / total),
         "corrected_rate": (corrected_count / total),
         "prolog_overrule_rate": (prolog_overrule_count / total),
+        "guideline_schema_valid_rate": (guideline_schema_valid_count / total),
+        "guideline_retry_avg": (guideline_retry_total / total),
     }

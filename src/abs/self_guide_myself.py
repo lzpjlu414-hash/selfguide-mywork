@@ -191,6 +191,53 @@ def parse_caring_swipl_answer(raw: str) -> Dict[str, Any]:
             parsed["solution_count_valid"] = False
     return parsed
 
+def _parse_structured_guideline(raw: str) -> Dict[str, str]:
+    text = (raw or "").strip()
+    if not text:
+        return {}
+
+    try:
+        obj = json.loads(text)
+    except Exception:
+        obj = None
+
+    if isinstance(obj, dict):
+        return {k: str(obj.get(k, "")).strip() for k in GUIDELINE_REQUIRED_KEYS}
+
+    pattern = re.compile(
+        r"(?ims)^\s*(task_type|schema|query_goal|fallback)\s*:\s*(.*?)\s*(?=^\s*(?:task_type|schema|query_goal|fallback)\s*:|\Z)"
+    )
+    parsed: Dict[str, str] = {}
+    for key, val in pattern.findall(text):
+        parsed[key.lower()] = str(val or "").strip()
+    return parsed
+
+
+def _schema_section_complete(schema_text: str) -> bool:
+    text = (schema_text or "").lower()
+    has_naming = any(k in text for k in ("naming", "snake_case", "constant"))
+    has_unknown = ("unknown" in text) or ("negation" in text) or ("not(" in text)
+    has_signature = ("signature" in text) or bool(re.search(r"\b[a-z_][a-z0-9_]*\s*\([^\)]*\)", text))
+    return has_naming and has_unknown and has_signature
+
+
+def _validate_structured_guideline(raw: str) -> Tuple[bool, Dict[str, str], List[str]]:
+    parsed = _parse_structured_guideline(raw)
+    missing = [k for k in GUIDELINE_REQUIRED_KEYS if not parsed.get(k, "").strip()]
+    if not missing and not _schema_section_complete(parsed.get("schema", "")):
+        missing.append("schema")
+    return (len(missing) == 0), parsed, missing
+
+
+def _render_guideline_block(guideline_obj: Dict[str, str]) -> str:
+    return (
+        f"task_type: {guideline_obj.get('task_type', '')}\n"
+        f"schema: |\n{guideline_obj.get('schema', '')}\n"
+        f"query_goal: |\n{guideline_obj.get('query_goal', '')}\n"
+        f"fallback: |\n{guideline_obj.get('fallback', '')}"
+    ).strip()
+
+
 
 def parse_task_type_from_guideline(guideline: str) -> str:
     """
@@ -418,6 +465,7 @@ PROLOG_MAX_DEPTH = 25
 SOLVE_TEMPERATURE = 0.2
 GUIDE_TEMPERATURE = 0.7
 MAX_RETRIES = 3
+GUIDELINE_REQUIRED_KEYS = ("task_type", "schema", "query_goal", "fallback")
 
 def postprocess_pred(dataset_key: str, pred: str) -> str:
     pred = (pred or "").strip()
@@ -588,7 +636,7 @@ def build_guideline_prompt(dataset_key: str, qblock: str, format_rule: str) -> s
         "fallback: |               # what to do on parse error/timeout/multiple answers\n\n"
         "Rules:\n"
         "1) DO NOT output any final answer.\n"
-        "2) schema MUST mention: constants naming, predicate set, negation/Unknown convention.\n"
+        "2) schema MUST mention: constants naming convention, negation/Unknown handling, and at least one predicate signature example like score(student, points).\n"
         "3) query_goal MUST be specific (what to prove/return).\n"
         f"4) solver output constraint: {format_rule}\n\n"
         f"{qblock}\n\n"
@@ -626,7 +674,7 @@ def generate_guideline_from_prompt(
     dataset_key: str,
     mock_llm: bool = False,
     mock_profile: Optional[str] = None,
-) -> str:
+) -> Tuple[str, bool, int]:
     candidates = []
     for _ in range(max(1, N_GUIDE_CANDIDATES)):
         h = [{"role": "user", "content": g_prompt}]
@@ -642,24 +690,55 @@ def generate_guideline_from_prompt(
         candidates.append(postprocess_guideline(g))
         time.sleep(0.2)
 
-    if len(candidates) == 1:
-        return candidates[0]
-    # 新增：如果 guideline 是 YAML 结构（含 task_type/schema/query_goal/fallback），不要 merge
-    if re.search(r"(?im)^\s*task_type\s*:\s*(yes|no|partial)\s*$", candidates[0]):
-        return candidates[0]
+    candidate = candidates[0]
+    if len(candidates) > 1:
+        # 新增：如果 guideline 是 YAML 结构（含 task_type/schema/query_goal/fallback），不要 merge
+        if not re.search(r"(?im)^\s*task_type\s*:\s*(yes|no|partial)\s*$", candidate):
+            merge_p = consolidate_guidelines_prompt(candidates, format_rule)
+            merge_h = [{"role": "user", "content": merge_p}]
+            merged = ai_request(
+                merge_h,
+                model=GUIDE_MODEL,
+                t=0.2,
+                mock_llm=mock_llm,
+                mock_profile=mock_profile,
+                dataset_key=dataset_key,
+                prompt_type="guideline_merge",
+            )
+            candidate = postprocess_guideline(merged)
 
-    merge_p = consolidate_guidelines_prompt(candidates, format_rule)
-    merge_h = [{"role": "user", "content": merge_p}]
-    merged = ai_request(
-        merge_h,
-        model=GUIDE_MODEL,
-        t=0.2,
-        mock_llm=mock_llm,
-        mock_profile=mock_profile,
-        dataset_key=dataset_key,
-        prompt_type="guideline_merge",
-    )
-    return postprocess_guideline(merged)
+    retries = 0
+    guideline_schema_valid, parsed, _ = _validate_structured_guideline(candidate)
+    while (not guideline_schema_valid) and retries < MAX_RETRIES:
+        retries += 1
+        retry_prompt = (
+            f"{g_prompt}\n\n"
+            "Your previous output was invalid. Return ONLY structured YAML with non-empty task_type/schema/query_goal/fallback."
+        )
+        retry_history = [{"role": "user", "content": retry_prompt}]
+        candidate = postprocess_guideline(
+            ai_request(
+                retry_history,
+                model=GUIDE_MODEL,
+                t=GUIDE_TEMPERATURE,
+                mock_llm=mock_llm,
+                mock_profile=mock_profile,
+                dataset_key=dataset_key,
+                prompt_type="guideline_retry",
+            )
+        )
+        guideline_schema_valid, parsed, _ = _validate_structured_guideline(candidate)
+
+    if guideline_schema_valid:
+        return _render_guideline_block(parsed), True, retries
+
+    fallback_obj = {
+        "task_type": "No",
+        "schema": "Use snake_case constants and consistent predicate arity. Unknown values use unknown atom; negation uses not_fact(X) rather than proving not(X). Predicate signature example: fact(subject, value).",
+        "query_goal": "Construct a single query that checks the asked target variable and returns one normalized answer.",
+        "fallback": "If parse/timeout/multi-answer occurs, keep LLM final answer and mark Prolog as inconclusive.",
+    }
+    return _render_guideline_block(fallback_obj), False, retries
 
 
 
@@ -827,7 +906,7 @@ def self_guide_run(
         if sample_error_code == "OK" and not contract_round_b.ok:
             sample_error_code = normalize_error_code(contract_round_b.error_code)
         g_prompt = build_guideline_prompt(dataset_key, qblock, format_rule)
-        guideline = generate_guideline_from_prompt(
+        guideline, guideline_schema_valid, guideline_retry_count = generate_guideline_from_prompt(
             g_prompt,
             format_rule,
             dataset_key=dataset_key,
@@ -1108,6 +1187,8 @@ def self_guide_run(
                 "solve_temperature": SOLVE_TEMPERATURE,
                 "guide_temperature": GUIDE_TEMPERATURE,
                 "max_retries": MAX_RETRIES,
+                "guideline_schema_valid": guideline_schema_valid,
+                "guideline_retry_count": guideline_retry_count,
                 "prompt_contract_version": PROMPT_CONTRACT_VERSION,
                 "prompt_versions": PROMPT_VERSIONS,
                 "prolog_contract_version": PROLOG_CONTRACT_VERSION,
@@ -1126,6 +1207,8 @@ def self_guide_run(
                 "config_hash": config_hash,
             },
             "guideline": guideline,
+            "guideline_schema_valid": guideline_schema_valid,
+            "guideline_retry_count": guideline_retry_count,
             "gold": gold,
             "draft_raw": draft_raw,
             "draft": draft,
