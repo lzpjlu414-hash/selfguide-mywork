@@ -125,6 +125,54 @@ def test_verifier_conflict_with_proof_overrides_to_prolog(tmp_path: Path, monkey
         assert payload["prolog"]["verifier_gate"] == "override"
         assert payload["final_answer"] == payload["prolog_answer"]
 
+
+def test_verifier_conflict_with_nonempty_invalid_proof_shape_blocks_override(tmp_path: Path, monkeypatch) -> None:
+    payload = _run_verifier_with_mock_payload(
+        tmp_path,
+        monkeypatch,
+        {
+            "schema_version": "1.0",
+            "ok": True,
+            "answer": "999",
+            "proof": "lorem ipsum",  # non-empty but invalid proof shape
+            "error_code": None,
+            "solution_count": 2,
+            "raw": {"results_count": 2},
+        },
+    )
+
+    assert payload["route"] == "verifier"
+    assert payload["prolog"]["proof_nonempty"] is True
+    assert payload["proof_shape_ok"] is False
+    assert payload["prolog"]["proof_shape_ok"] is False
+    assert payload["prolog"]["verifier_allow_override"] is False
+    assert payload["prolog"]["verifier_gate"] == "multi_solution_conflict"
+    assert payload["final_answer"] == payload["llm_candidate_norm"]
+
+
+def test_verifier_conflict_with_valid_proof_shape_and_single_solution_allows_override(tmp_path: Path,
+                                                                                      monkeypatch) -> None:
+    payload = _run_verifier_with_mock_payload(
+        tmp_path,
+        monkeypatch,
+        {
+            "schema_version": "1.0",
+            "ok": True,
+            "answer": "999",
+            "proof": "proof(step1).",
+            "error_code": None,
+            "solution_count": 1,
+            "raw": {"results_count": 1},
+        },
+    )
+
+    assert payload["route"] == "verifier"
+    assert payload["proof_shape_ok"] is True
+    assert payload["prolog"]["proof_shape_ok"] is True
+    assert payload["prolog"]["verifier_allow_override"] is True
+    assert payload["prolog"]["verifier_gate"] == "override"
+    assert payload["final_answer"] == payload["prolog_answer"]
+
 def test_answer_nonempty_filters_placeholders() -> None:
     assert is_nonempty_answer(" 42 ") is True
     assert is_nonempty_answer("  unknown ") is False
