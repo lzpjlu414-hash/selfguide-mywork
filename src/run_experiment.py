@@ -10,9 +10,19 @@ from src.experiment_contract import (
 )
 from src.utils.dataset_io import resolve_data_path, validate_openai_api_key
 
+def _normalize_prolog_controls(args) -> None:
+    """Make mock Prolog runs deterministically exercise the Prolog branch."""
+    if not args.mock_prolog:
+        return
+    if args.prolog_role == "off":
+        args.prolog_role = "verifier"
+    if args.force_task_type is None:
+        args.force_task_type = "Yes"
+
 def main(argv: Optional[list[str]] = None) -> None:
     parser = build_experiment_parser()
     args = parser.parse_args(argv)
+    _normalize_prolog_controls(args)
 
 
 
