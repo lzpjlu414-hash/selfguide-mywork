@@ -37,3 +37,17 @@ def test_mock_prolog_smoke_reaches_non_llm_route_and_summary_marks_enabled(tmp_p
     # Redundant guard to make smoke intent explicit at sample level too.
     payloads = [json.loads(p.read_text(encoding="utf-8")) for p in logs]
     assert any(str(p.get("route", "")).strip() in {"verifier", "executor"} for p in payloads)
+
+    for payload in payloads:
+        solution_count = payload.get("solution_count")
+        assert isinstance(solution_count, int)
+        assert solution_count >= 1
+
+        prolog_error_code = payload.get("prolog_error_code")
+        assert isinstance(prolog_error_code, str)
+        assert prolog_error_code.strip()
+        assert prolog_error_code == "OK"
+
+    assert summary["solution_count"]["missing"] == 0
+    assert summary["prolog_error_code_distribution"].get("OK", 0) == len(payloads)
+

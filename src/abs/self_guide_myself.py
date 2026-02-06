@@ -538,8 +538,9 @@ def build_mock_swipl_output(dataset_key: str, llm_candidate_norm: str) -> dict:
         "ok": True,
         "answer": answer,
         "proof": "mock_proof",
-        "error_code": None,
-        "raw": "",
+        "error_code": "OK",
+        "solution_count": 1,
+        "raw": {"results_count": 1, "results": [{"answer": answer}]},
     })
     return {
         "ok": True,
@@ -1160,12 +1161,24 @@ def self_guide_run(
             prolog_used=prolog_used,
             prolog_overruled=prolog_overruled,
         )
-        solution_count = prolog_pack.get("solution_count") if isinstance(prolog_pack, dict) else None
+        prolog_payload = prolog_pack.get("swipl_contract") if isinstance(prolog_pack, dict) and isinstance(
+            prolog_pack.get("swipl_contract"), dict) else {}
+        raw_prolog_payload = prolog_payload.get("raw") if isinstance(prolog_payload.get("raw"), dict) else {}
+        solution_count = int(
+            prolog_payload.get("solution_count")
+            or raw_prolog_payload.get("results_count")
+            or len(raw_prolog_payload.get("results", []))
+            or 0
+        )
         proof_nonempty = is_nonempty_proof(prolog_pack.get("proof")) if isinstance(prolog_pack, dict) else False
         verifier_gate = str(prolog_pack.get("verifier_gate") or "") if isinstance(prolog_pack, dict) else ""
         prolog_inconclusive = verifier_gate == "prolog_inconclusive"
         multi_solution_conflict = verifier_gate == "multi_solution_conflict"
-        prolog_error_code = prolog_pack.get("error_code") if isinstance(prolog_pack, dict) else None
+        prolog_error_code = (
+                prolog_payload.get("error_code")
+                or prolog_payload.get("prolog_error_code")
+                or ("OK" if prolog_ok else "UNKNOWN")
+        )
 
         draft_prolog_conflict = None
         if prolog_answer is not None:
