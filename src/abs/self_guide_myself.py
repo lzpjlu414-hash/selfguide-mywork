@@ -71,10 +71,105 @@ def is_nonempty_answer(value: Any) -> bool:
         return False
     return text.lower() not in ANSWER_PLACEHOLDERS
 
-
 def is_nonempty_proof(value: Any) -> bool:
     text = str(value or "").strip()
     return bool(text and text != NO_PROOF_RETURNED_SENTINEL)
+
+def _try_parse_json_object(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        body = value.strip()
+        if not body:
+            return {}
+        try:
+            parsed = json.loads(body)
+        except Exception:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _coerce_non_negative_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float) and value.is_integer() and value >= 0:
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text and text.isdigit():
+            return int(text)
+    return None
+
+
+def _resolve_flat_solution_count(prolog_pack: Dict[str, Any], mock_prolog: bool, prolog_ok: bool) -> int:
+    swipl_contract = prolog_pack.get("swipl_contract") if isinstance(prolog_pack.get("swipl_contract"), dict) else {}
+    swipl = prolog_pack.get("swipl") if isinstance(prolog_pack.get("swipl"), dict) else {}
+    swipl_raw_payload = _try_parse_json_object(swipl.get("raw"))
+    swipl_raw_nested = _try_parse_json_object(swipl_raw_payload.get("raw"))
+    contract_raw_payload = _try_parse_json_object(swipl_contract.get("raw"))
+
+    candidates: List[Any] = [
+        prolog_pack.get("solution_count"),
+        swipl_contract.get("solution_count"),
+        swipl_raw_payload.get("solution_count"),
+        swipl_raw_nested.get("solution_count"),
+        contract_raw_payload.get("solution_count"),
+        swipl_raw_payload.get("results_count"),
+        swipl_raw_nested.get("results_count"),
+        contract_raw_payload.get("results_count"),
+    ]
+
+    for results in (
+        swipl_raw_payload.get("results"),
+        swipl_raw_nested.get("results"),
+        contract_raw_payload.get("results"),
+    ):
+        if isinstance(results, list):
+            candidates.append(len(results))
+
+    for candidate in candidates:
+        normalized = _coerce_non_negative_int(candidate)
+        if normalized is not None:
+            return normalized
+
+    if mock_prolog:
+        return 1 if prolog_ok else 0
+    return 0
+
+
+def _resolve_flat_prolog_error_code(prolog_pack: Dict[str, Any], mock_prolog: bool, prolog_ok: bool) -> str:
+    swipl_contract = prolog_pack.get("swipl_contract") if isinstance(prolog_pack.get("swipl_contract"), dict) else {}
+    swipl = prolog_pack.get("swipl") if isinstance(prolog_pack.get("swipl"), dict) else {}
+    swipl_raw_payload = _try_parse_json_object(swipl.get("raw"))
+    swipl_raw_nested = _try_parse_json_object(swipl_raw_payload.get("raw"))
+    contract_raw_payload = _try_parse_json_object(swipl_contract.get("raw"))
+
+    candidates = [
+        prolog_pack.get("error_code"),
+        swipl_contract.get("error_code"),
+        swipl.get("error_code"),
+        swipl_raw_payload.get("error_code"),
+        swipl_raw_payload.get("prolog_error_code"),
+        swipl_raw_nested.get("error_code"),
+        swipl_raw_nested.get("prolog_error_code"),
+        contract_raw_payload.get("error_code"),
+        contract_raw_payload.get("prolog_error_code"),
+    ]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        code = str(candidate).strip()
+        if code:
+            return code
+
+    if mock_prolog:
+        return "OK" if prolog_ok else "MOCK_PROLOG_UNKNOWN"
+    return "OK" if prolog_ok else "UNKNOWN"
+
 
 def resolve_solution_count(payload: Dict[str, Any]) -> Tuple[Optional[int], bool]:
         if not isinstance(payload, dict):
@@ -1163,21 +1258,19 @@ def self_guide_run(
         )
         prolog_payload = prolog_pack.get("swipl_contract") if isinstance(prolog_pack, dict) and isinstance(
             prolog_pack.get("swipl_contract"), dict) else {}
-        raw_prolog_payload = prolog_payload.get("raw") if isinstance(prolog_payload.get("raw"), dict) else {}
-        solution_count = int(
-            prolog_payload.get("solution_count")
-            or raw_prolog_payload.get("results_count")
-            or len(raw_prolog_payload.get("results", []))
-            or 0
+        solution_count = _resolve_flat_solution_count(
+            prolog_pack if isinstance(prolog_pack, dict) else {},
+            mock_prolog=mock_prolog,
+            prolog_ok=prolog_ok,
         )
         proof_nonempty = is_nonempty_proof(prolog_pack.get("proof")) if isinstance(prolog_pack, dict) else False
         verifier_gate = str(prolog_pack.get("verifier_gate") or "") if isinstance(prolog_pack, dict) else ""
         prolog_inconclusive = verifier_gate == "prolog_inconclusive"
         multi_solution_conflict = verifier_gate == "multi_solution_conflict"
-        prolog_error_code = (
-                prolog_payload.get("error_code")
-                or prolog_payload.get("prolog_error_code")
-                or ("OK" if prolog_ok else "UNKNOWN")
+        prolog_error_code = _resolve_flat_prolog_error_code(
+            prolog_pack if isinstance(prolog_pack, dict) else {},
+            mock_prolog=mock_prolog,
+            prolog_ok=prolog_ok,
         )
 
         draft_prolog_conflict = None
