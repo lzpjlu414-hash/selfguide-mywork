@@ -1097,6 +1097,10 @@ def self_guide_run(
             "meta_interpreter": meta_interpreter,
             "max_depth": max_depth,
             "role_mode": role_mode,
+            "answer_nonempty": False,
+            "proof_nonempty": False,
+            "proof_shape_ok": False,
+            "verifier_allow_override": False,
         }
         llm_candidate = pred
         llm_candidate_norm = postprocess_pred(dataset_key, llm_candidate)
@@ -1237,6 +1241,7 @@ def self_guide_run(
                                 prolog_answer_norm)
                             if llm_prolog_conflict:
                                 answer_nonempty = is_nonempty_answer(prolog_answer_norm)
+                                proof_nonempty = is_nonempty_proof(prolog_pack.get("proof"))
                                 proof_shape_ok = validate_proof_shape(str(prolog_pack.get("proof") or ""))
                                 gate_pass = bool(
                                     prolog_ok
@@ -1246,6 +1251,7 @@ def self_guide_run(
                                 )
                                 prolog_pack["answer_nonempty"] = answer_nonempty
                                 prolog_pack["proof_nonempty"] = proof_nonempty
+                                prolog_pack["proof_shape_ok"] = proof_shape_ok
                                 prolog_pack["verifier_allow_override"] = gate_pass
                                 if gate_pass:
                                     final_answer = prolog_answer_norm
@@ -1351,6 +1357,8 @@ def self_guide_run(
         )
         proof_shape_ok = validate_proof_shape(str(prolog_pack.get("proof") or "")) if isinstance(prolog_pack,
                                                                                                  dict) else False
+        if isinstance(prolog_pack, dict):
+            prolog_pack["proof_shape_ok"] = proof_shape_ok
         verifier_gate = str(prolog_pack.get("verifier_gate") or "") if isinstance(prolog_pack, dict) else ""
         prolog_inconclusive = verifier_gate == "prolog_inconclusive"
         multi_solution_conflict = verifier_gate == "multi_solution_conflict"
@@ -1423,6 +1431,7 @@ def self_guide_run(
             "prolog_used": prolog_used,
             "prolog_ok": prolog_ok,
             "solution_count": solution_count,
+            "proof_nonempty": bool(prolog_pack.get("proof_nonempty")) if isinstance(prolog_pack, dict) else False,
             "proof_shape_ok": proof_shape_ok,
             "prolog_inconclusive": prolog_inconclusive,
             "multi_solution_conflict": multi_solution_conflict,

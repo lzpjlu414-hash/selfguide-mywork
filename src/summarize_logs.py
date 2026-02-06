@@ -31,6 +31,25 @@ def normalize_route(route: Any) -> str:
     route = route.strip()
     return route if route in allowed_routes else "llm_only"
 
+def _resolve_proof_shape_flag(data: dict, prolog: dict) -> bool:
+    proof_shape_ok_flag = to_bool(data.get("proof_shape_ok"))
+    if proof_shape_ok_flag is not None:
+        return proof_shape_ok_flag
+
+    proof_shape_ok_from_prolog = to_bool(prolog.get("proof_shape_ok"))
+    if proof_shape_ok_from_prolog is not None:
+        return proof_shape_ok_from_prolog
+
+    proof_nonempty_flag = to_bool(data.get("proof_nonempty"))
+    if proof_nonempty_flag is not None:
+        return proof_nonempty_flag
+
+    proof_nonempty_from_prolog = to_bool(prolog.get("proof_nonempty"))
+    if proof_nonempty_from_prolog is not None:
+        return proof_nonempty_from_prolog
+
+    proof = prolog.get("proof")
+    return bool(isinstance(proof, str) and proof.strip())
 
 def summarize_logs(log_dir: Path) -> dict:
     logs = sorted(p for p in log_dir.glob("*.json") if p.name != "run_config.json")
@@ -44,6 +63,7 @@ def summarize_logs(log_dir: Path) -> dict:
             "prolog_enabled": 0,
             "proof_nonempty": 0,
             "prolog_ok": 0,
+            "proof_shape_ok": 0,
             "solution_count": {"missing": 0, "one": 0, "multi": 0},
             "correctness_missing": 0,
             "prolog_missing": 0,
@@ -72,6 +92,7 @@ def summarize_logs(log_dir: Path) -> dict:
     prolog_missing = 0
     proof_nonempty = 0
     prolog_swipl_ok = 0
+    proof_shape_ok = 0
     error_code_counts = Counter()
     prolog_error_code_counts = Counter()
     schema_version_counts = Counter()
@@ -118,7 +139,12 @@ def summarize_logs(log_dir: Path) -> dict:
         if enabled:
             prolog_enabled += 1
 
+        proof_shape_ok_flag = _resolve_proof_shape_flag(data, prolog)
+        if proof_shape_ok_flag:
+            proof_shape_ok += 1
         proof_nonempty_flag = to_bool(data.get("proof_nonempty"))
+        if proof_nonempty_flag is None:
+            proof_nonempty_flag = to_bool(prolog.get("proof_nonempty"))
         if proof_nonempty_flag is None:
             proof = prolog.get("proof")
             proof_nonempty_flag = bool(isinstance(proof, str) and proof.strip())
@@ -189,6 +215,7 @@ def summarize_logs(log_dir: Path) -> dict:
         "route_distribution": route_distribution,
         "route_ratio": route_ratio,
         "prolog_enabled": prolog_enabled,
+        "proof_shape_ok": proof_shape_ok,
         "proof_nonempty": proof_nonempty,
         "prolog_ok": prolog_ok_count,
         "solution_count": {

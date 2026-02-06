@@ -14,6 +14,7 @@ def test_summarize_logs_route_buckets_and_rates(tmp_path: Path) -> None:
             "prolog_used": True,
             "prolog_ok": True,
             "solution_count": 1,
+            "proof_shape_ok": True,
             "proof_nonempty": True,
             "prolog_overruled": True,
             "final_modified_by_prolog": True,
@@ -30,13 +31,13 @@ def test_summarize_logs_route_buckets_and_rates(tmp_path: Path) -> None:
             "prolog_used": True,
             "prolog_ok": True,
             "solution_count": 2,
-            "proof_nonempty": False,
+            "proof_nonempty": True,
             "prolog_overruled": True,
             "final_modified_by_prolog": False,
             "prolog_inconclusive": False,
             "multi_solution_conflict": True,
             "prolog_error_code": "OK",
-            "prolog": {"enabled": True},
+            "prolog": {"enabled": True, "proof": "proof(step1)."},
         },
         {
             "correctness": True,
@@ -73,3 +74,5 @@ def test_summarize_logs_route_buckets_and_rates(tmp_path: Path) -> None:
     assert summary["inconclusive_rate"] == 2 / 3
     assert summary["multi_solution_conflict_rate"] == 1 / 3
     assert summary["solution_count"] == {"missing": 1, "one": 1, "multi": 1}
+    assert summary["proof_shape_ok"] == 2
+    assert summary["proof_nonempty"] == 2

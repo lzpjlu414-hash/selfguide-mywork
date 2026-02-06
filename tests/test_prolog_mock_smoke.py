@@ -74,11 +74,18 @@ def test_mock_prolog_disk_log_gsm8k_fields_are_typed_and_nonempty(tmp_path: Path
     assert isinstance(payload.get("solution_count"), int)
     assert payload["solution_count"] >= 0
 
+    assert "proof_shape_ok" in payload
+    assert isinstance(payload["proof_shape_ok"], bool)
+    assert isinstance(payload.get("prolog"), dict)
+    assert "proof_shape_ok" in payload["prolog"]
+    assert isinstance(payload["prolog"]["proof_shape_ok"], bool)
+
     assert isinstance(payload.get("prolog_error_code"), str)
     assert payload["prolog_error_code"].strip()
     assert payload["prolog_error_code"] == "OK"
 
     summary = summarize_logs(tmp_path)
+    assert isinstance(summary["proof_shape_ok"], int)
     assert summary["solution_count"]["missing"] == 0
 
     distribution = summary["prolog_error_code_distribution"]
