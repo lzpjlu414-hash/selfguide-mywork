@@ -75,6 +75,46 @@ def is_nonempty_proof(value: Any) -> bool:
     text = str(value or "").strip()
     return bool(text and text != NO_PROOF_RETURNED_SENTINEL)
 
+def validate_proof_shape(proof: str) -> bool:
+    """Lightweight proof-shape validation for verifier override gating."""
+    text = str(proof or "").strip()
+    if not text or text == NO_PROOF_RETURNED_SENTINEL:
+        return False
+    if len(text) < 8:
+        return False
+
+    bracket_stack: List[str] = []
+    opening = {"(": ")", "[": "]"}
+    closing = {")": "(", "]": "["}
+    for ch in text:
+        if ch in opening:
+            bracket_stack.append(ch)
+        elif ch in closing:
+            if not bracket_stack or bracket_stack[-1] != closing[ch]:
+                return False
+            bracket_stack.pop()
+    if bracket_stack:
+        return False
+
+    lowered = text.lower()
+    obvious_junk_tokens = (
+        "as an ai",
+        "lorem ipsum",
+        "<html",
+        "http://",
+        "https://",
+        "javascript:",
+        "undefined",
+        "nan",
+    )
+    if any(token in lowered for token in obvious_junk_tokens):
+        return False
+
+    if re.search(r"[a-zA-Z_]\w*\s*\(", text) is None:
+        return False
+
+    return True
+
 def _try_parse_json_object(value: Any) -> Dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -1197,12 +1237,12 @@ def self_guide_run(
                                 prolog_answer_norm)
                             if llm_prolog_conflict:
                                 answer_nonempty = is_nonempty_answer(prolog_answer_norm)
-                                proof_nonempty = is_nonempty_proof(prolog_pack.get("proof"))
+                                proof_shape_ok = validate_proof_shape(str(prolog_pack.get("proof") or ""))
                                 gate_pass = bool(
                                     prolog_ok
                                     and answer_nonempty
                                     and solution_count_valid
-                                    and (proof_nonempty or solution_count == 1)
+                                    and (proof_shape_ok or solution_count == 1)
                                 )
                                 prolog_pack["answer_nonempty"] = answer_nonempty
                                 prolog_pack["proof_nonempty"] = proof_nonempty
@@ -1214,7 +1254,7 @@ def self_guide_run(
                                 else:
                                     gate = "prolog_inconclusive"
                                     if solution_count_valid:
-                                        if not proof_nonempty and isinstance(solution_count,
+                                        if not proof_shape_ok and isinstance(solution_count,
                                                                              int) and solution_count > 1:
                                             gate = "multi_solution_conflict"
                                     route_reason = f"Verifier kept LLM final: {gate}."
@@ -1309,7 +1349,8 @@ def self_guide_run(
             mock_prolog=mock_prolog,
             prolog_ok=prolog_ok,
         )
-        proof_nonempty = is_nonempty_proof(prolog_pack.get("proof")) if isinstance(prolog_pack, dict) else False
+        proof_shape_ok = validate_proof_shape(str(prolog_pack.get("proof") or "")) if isinstance(prolog_pack,
+                                                                                                 dict) else False
         verifier_gate = str(prolog_pack.get("verifier_gate") or "") if isinstance(prolog_pack, dict) else ""
         prolog_inconclusive = verifier_gate == "prolog_inconclusive"
         multi_solution_conflict = verifier_gate == "multi_solution_conflict"
@@ -1382,7 +1423,7 @@ def self_guide_run(
             "prolog_used": prolog_used,
             "prolog_ok": prolog_ok,
             "solution_count": solution_count,
-            "proof_nonempty": proof_nonempty,
+            "proof_shape_ok": proof_shape_ok,
             "prolog_inconclusive": prolog_inconclusive,
             "multi_solution_conflict": multi_solution_conflict,
             "prolog_error_code": prolog_error_code,
