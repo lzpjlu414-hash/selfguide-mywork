@@ -6,7 +6,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.abs.self_guide_myself import self_guide_run
+from src.abs.self_guide_myself import (
+    NO_PROOF_RETURNED_SENTINEL,
+    is_nonempty_answer,
+    is_nonempty_proof,
+    resolve_solution_count,
+    self_guide_run,
+)
 
 
 def _run_once(log_dir: Path, role: str) -> dict:
@@ -116,3 +122,53 @@ def test_verifier_conflict_with_proof_overrides_to_prolog(tmp_path: Path, monkey
         assert payload["route"] == "verifier"
         assert payload["prolog"]["verifier_gate"] == "override"
         assert payload["final_answer"] == payload["prolog_answer"]
+
+def test_answer_nonempty_filters_placeholders() -> None:
+    assert is_nonempty_answer(" 42 ") is True
+    assert is_nonempty_answer("  unknown ") is False
+    assert is_nonempty_answer(" N/A ") is False
+
+
+def test_proof_nonempty_blocks_no_proof_sentinel() -> None:
+    assert is_nonempty_proof("proof(step1).") is True
+    assert is_nonempty_proof(NO_PROOF_RETURNED_SENTINEL) is False
+
+
+def test_solution_count_resolution_and_invalid_types() -> None:
+    count, valid = resolve_solution_count(
+        {
+            "solution_count": None,
+            "raw": {
+                "results_count": None,
+                "results": ["a", "b"],
+            },
+        }
+    )
+    assert (count, valid) == (2, True)
+
+    missing_count, missing_valid = resolve_solution_count({"raw": {}})
+    assert (missing_count, missing_valid) == (None, True)
+
+    invalid_count, invalid_valid = resolve_solution_count({"solution_count": "2", "raw": {"results": []}})
+    assert (invalid_count, invalid_valid) == (None, False)
+
+
+def test_verifier_invalid_solution_count_keeps_llm_as_inconclusive(tmp_path: Path, monkeypatch) -> None:
+    payload = _run_verifier_with_mock_payload(
+        tmp_path,
+        monkeypatch,
+        {
+            "schema_version": "1.0",
+            "ok": True,
+            "answer": "999",
+            "proof": "",
+            "error_code": None,
+            "solution_count": "invalid",
+            "raw": {"results_count": 2},
+        },
+    )
+
+    assert payload["route"] == "verifier"
+    assert payload["prolog"]["solution_count_valid"] is False
+    assert payload["prolog"]["verifier_gate"] == "prolog_inconclusive"
+    assert payload["final_answer"] == payload["llm_candidate_norm"]

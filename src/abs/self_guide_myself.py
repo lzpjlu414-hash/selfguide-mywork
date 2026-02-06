@@ -62,6 +62,7 @@ SWIPL_REQUIRED_KEYS = {
 }
 
 ANSWER_PLACEHOLDERS = {"unknown", "none", "null", "n/a", "na"}
+NO_PROOF_RETURNED_SENTINEL = "NO_PROOF_RETURNED"
 
 
 def is_nonempty_answer(value: Any) -> bool:
@@ -73,7 +74,38 @@ def is_nonempty_answer(value: Any) -> bool:
 
 def is_nonempty_proof(value: Any) -> bool:
     text = str(value or "").strip()
-    return bool(text and text != "NO_PROOF_RETURNED")
+    return bool(text and text != NO_PROOF_RETURNED_SENTINEL)
+
+def resolve_solution_count(payload: Dict[str, Any]) -> Tuple[Optional[int], bool]:
+        if not isinstance(payload, dict):
+            return None, False
+
+        if payload.get("solution_count_valid") is False:
+            return None, False
+
+        raw_payload = payload.get("raw")
+        sources = [
+            payload.get("solution_count"),
+            raw_payload.get("results_count") if isinstance(raw_payload, dict) else None,
+        ]
+
+        if isinstance(raw_payload, dict) and "results" in raw_payload:
+            results = raw_payload.get("results")
+            if isinstance(results, list):
+                sources.append(len(results))
+            else:
+                sources.append(results)
+        else:
+            sources.append(None)
+
+        for candidate in sources:
+            if candidate is None:
+                continue
+            if isinstance(candidate, int) and candidate >= 0:
+                return candidate, True
+            return None, False
+
+        return None, True
 
 
 def parse_caring_swipl_answer(raw: str) -> Dict[str, Any]:
@@ -88,6 +120,7 @@ def parse_caring_swipl_answer(raw: str) -> Dict[str, Any]:
         "legacy": False,
         "validation_error": None,
         "solution_count": None,
+        "solution_count_valid": True,
     }
     body = (raw or "").strip()
     if not body:
@@ -155,9 +188,7 @@ def parse_caring_swipl_answer(raw: str) -> Dict[str, Any]:
         if isinstance(solution_count, int) and solution_count >= 0:
             parsed["solution_count"] = solution_count
         else:
-            parsed["error_code"] = "SCHEMA_TYPE_MISMATCH"
-            parsed["validation_error"] = "solution_count must be non-negative int/null"
-            return parsed
+            parsed["solution_count_valid"] = False
     return parsed
 
 
@@ -924,13 +955,9 @@ def self_guide_run(
                     )
                     prolog_pack["proof"] = swipl_contract.get("proof")
                     prolog_pack["error_code"] = swipl_contract.get("error_code")
-                    raw_meta = swipl_contract.get("raw") if isinstance(swipl_contract.get("raw"), dict) else {}
-                    solution_count = swipl_contract.get("solution_count")
-                    if solution_count is None and isinstance(raw_meta, dict):
-                        raw_count = raw_meta.get("results_count")
-                        if isinstance(raw_count, int) and raw_count >= 0:
-                            solution_count = raw_count
+                    solution_count, solution_count_valid = resolve_solution_count(swipl_contract)
                     prolog_pack["solution_count"] = solution_count
+                    prolog_pack["solution_count_valid"] = solution_count_valid
                     prolog_pack["prolog_answer_raw"] = prolog_answer
                     prolog_pack["prolog_answer_norm"] = prolog_answer_norm
 
@@ -939,7 +966,7 @@ def self_guide_run(
 
                     if meta_interpreter in ("with_proof", "iter_deep_with_proof") and swipl_contract.get("ok"):
                         if not prolog_pack["proof"]:
-                            prolog_pack["proof"] = "NO_PROOF_RETURNED"
+                            prolog_pack["proof"] = NO_PROOF_RETURNED_SENTINEL
 
                     prolog_schema_ok = (
                             swipl_contract.get("schema_version") == SWIPL_OUT_SCHEMA_VERSION
@@ -963,6 +990,7 @@ def self_guide_run(
                                 gate_pass = bool(
                                     prolog_ok
                                     and answer_nonempty
+                                    and solution_count_valid
                                     and (proof_nonempty or solution_count == 1)
                                 )
                                 prolog_pack["answer_nonempty"] = answer_nonempty
@@ -973,12 +1001,11 @@ def self_guide_run(
                                     route_reason = "Verifier override accepted by trust gate."
                                     prolog_pack["verifier_gate"] = "override"
                                 else:
-                                    gate = (
-                                        "multi_solution_conflict"
-                                        if (not proof_nonempty and isinstance(solution_count,
-                                                                              int) and solution_count > 1)
-                                        else "prolog_inconclusive"
-                                    )
+                                    gate = "prolog_inconclusive"
+                                    if solution_count_valid:
+                                        if not proof_nonempty and isinstance(solution_count,
+                                                                             int) and solution_count > 1:
+                                            gate = "multi_solution_conflict"
                                     route_reason = f"Verifier kept LLM final: {gate}."
                                     prolog_pack["verifier_gate"] = gate
                             else:
