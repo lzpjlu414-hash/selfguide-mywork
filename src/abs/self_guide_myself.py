@@ -1163,6 +1163,7 @@ def self_guide_run(
         prolog_pack = {
             "enabled": False,
             "task_type": "No",
+            "task_type_effective": "No",
             "prolog_max_result": prolog_max_result,
             "meta_interpreter": meta_interpreter,
             "max_depth": max_depth,
@@ -1173,6 +1174,8 @@ def self_guide_run(
             "verifier_allow_override": False,
             "task_confidence": 0.0,
             "task_type_raw": "No",
+            "task_type_forced": None,
+            "task_type_source": "parsed",
             "confidence_gate_reason": "Dataset unsupported or confidence gate not applied.",
             "role_mode_effective": role_mode,
         }
@@ -1185,27 +1188,30 @@ def self_guide_run(
 
         if dataset_key in ("gsm8k", "prontoqa", "proofwriter"):
             parsed_task_type, task_confidence = parse_task_type_with_confidence(guideline)
-            task_type = parsed_task_type
+            task_type_raw = parsed_task_type
+            task_type_forced = force_task_type if force_task_type else None
+            task_type_for_gate = task_type_forced if task_type_forced else task_type_raw
+            task_type_source = "forced" if task_type_forced else "parsed"
 
-            if force_task_type:
-                task_type = force_task_type
-
-            confidence_gate_task_type = task_type
+            confidence_gate_task_type = task_type_for_gate
             confidence_route_mode = role_mode
             confidence_gate_reason = "Guideline confidence passed full routing threshold."
-            if task_confidence < 0.4:
+            if task_confidence <= 0.4:
                 confidence_gate_task_type = "No"
                 confidence_route_mode = "off"
                 confidence_gate_reason = (
-                    "Guideline confidence < 0.4; disable Prolog and default to No to avoid low-trust execution."
+                    "Guideline confidence <= 0.4; disable Prolog and default to No to avoid low-trust execution."
                 )
             elif task_confidence < 0.7:
                 confidence_gate_task_type = "Partial"
                 confidence_route_mode = "verifier"
-                confidence_gate_reason = "Guideline confidence in [0.4,0.7); allow verifier-only mode."
+                confidence_gate_reason = "Guideline confidence in (0.4,0.7); allow verifier-only mode."
 
             prolog_pack["task_type"] = confidence_gate_task_type
-            prolog_pack["task_type_raw"] = task_type
+            prolog_pack["task_type_effective"] = confidence_gate_task_type
+            prolog_pack["task_type_raw"] = task_type_raw
+            prolog_pack["task_type_forced"] = task_type_forced
+            prolog_pack["task_type_source"] = task_type_source
             prolog_pack["task_confidence"] = task_confidence
             prolog_pack["confidence_gate_reason"] = confidence_gate_reason
             prolog_pack["role_mode_effective"] = confidence_route_mode
@@ -1324,7 +1330,8 @@ def self_guide_run(
                     prolog_ok = bool(swipl_contract.get("ok") and prolog_answer_norm is not None and prolog_schema_ok)
 
                     if prolog_ok:
-                        if role_mode == "executor":
+                        effective_role_mode = str(prolog_pack.get("role_mode_effective") or role_mode)
+                        if effective_role_mode == "executor":
                             route = "executor"
                             final_answer = prolog_answer_norm
                             route_reason = "Executor mode: final answer forced from Prolog."
@@ -1502,6 +1509,9 @@ def self_guide_run(
                 "prolog_enabled": prolog_pack.get("enabled", False),
                 "prolog_task_type": prolog_pack.get("task_type"),
                 "task_type_raw": prolog_pack.get("task_type_raw"),
+                "task_type_effective": prolog_pack.get("task_type_effective", prolog_pack.get("task_type")),
+                "task_type_forced": prolog_pack.get("task_type_forced"),
+                "task_type_source": prolog_pack.get("task_type_source"),
                 "task_confidence": prolog_pack.get("task_confidence", 0.0),
                 "confidence_gate_reason": prolog_pack.get("confidence_gate_reason"),
                 "role_mode_effective": prolog_pack.get("role_mode_effective", role_mode),
@@ -1546,6 +1556,9 @@ def self_guide_run(
             "route": route,
             "task_confidence": prolog_pack.get("task_confidence", 0.0),
             "task_type_raw": prolog_pack.get("task_type_raw"),
+            "task_type_effective": prolog_pack.get("task_type_effective", prolog_pack.get("task_type")),
+            "task_type_forced": prolog_pack.get("task_type_forced"),
+            "task_type_source": prolog_pack.get("task_type_source"),
             "confidence_gate_reason": prolog_pack.get("confidence_gate_reason"),
             "role_mode_effective": prolog_pack.get("role_mode_effective", role_mode),
             "fallback_taken": fallback_taken,
