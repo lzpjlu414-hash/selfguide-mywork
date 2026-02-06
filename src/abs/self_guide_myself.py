@@ -909,6 +909,7 @@ def self_guide_run(
     mock_profile: Optional[str] = None,
     mock_prolog: bool = False,
     prolog_role: str = "off",
+    inject_failure: Optional[str] = None,
     meta_interpreter: str = PROLOG_META_INTERPRETER,
     max_depth: int = PROLOG_MAX_DEPTH,
     prolog_max_result: int = PROLOG_MAX_RESULT,
@@ -971,6 +972,7 @@ def self_guide_run(
             "mock_llm": mock_llm,
             "mock_prolog": mock_prolog,
             "prolog_role": prolog_role,
+            "inject_failure": inject_failure,
         }
         config_hash = build_config_hash(base_run_config)
         sample_error_code = "OK"
@@ -1060,6 +1062,8 @@ def self_guide_run(
         llm_candidate_norm = postprocess_pred(dataset_key, llm_candidate)
         final_answer = llm_candidate_norm
         route_reason = None
+        fallback_taken = False
+        fallback_reason = None
 
         if dataset_key in ("gsm8k", "prontoqa", "proofwriter"):
             task_type = parse_task_type_from_guideline(guideline)
@@ -1072,6 +1076,7 @@ def self_guide_run(
             prolog_pack["enabled"] = mode_allows_prolog and (task_type in ("Yes", "Partial"))
 
             if prolog_pack["enabled"]:
+                route = role_mode
                 prolog_prompt = build_prolog_gen_prompt(qblock, guideline)
                 prolog_history = [{"role": "user", "content": prolog_prompt}]
                 prolog_raw = ai_request(
@@ -1086,6 +1091,8 @@ def self_guide_run(
                 prolog_pack["prolog_raw"] = prolog_raw
 
                 try:
+                    if inject_failure == "parse_fail":
+                        raise ValueError("INJECTED_PARSE_FAIL")
                     clauses = extract_prolog_clauses(prolog_raw)
                     prolog_pack["clauses"] = clauses
                     prolog_contract = validate_prolog_contract(clauses)
@@ -1098,7 +1105,36 @@ def self_guide_run(
                     if sample_error_code == "OK" and not prolog_contract.ok:
                         sample_error_code = normalize_error_code(prolog_contract.error_code)
 
-                    if mock_prolog:
+                    if inject_failure == "timeout":
+                        swipl_out = {
+                            "ok": False,
+                            "error": "injected timeout",
+                            "error_code": "SWIPL_TIMEOUT",
+                            "raw": "",
+                            "stdout": "",
+                            "stderr": "injected timeout",
+                            "returncode": None,
+                            "cmd": "injected_timeout",
+                        }
+                    elif inject_failure == "multi_solution":
+                        swipl_out = {
+                            "ok": True,
+                            "error": None,
+                            "error_code": None,
+                            "raw": json.dumps({
+                                "schema_version": SWIPL_OUT_SCHEMA_VERSION,
+                                "ok": True,
+                                "answer": "999",
+                                "proof": "",
+                                "error_code": None,
+                                "solution_count": 2,
+                            }),
+                            "stdout": "",
+                            "stderr": "",
+                            "returncode": 0,
+                            "cmd": "injected_multi_solution",
+                        }
+                    elif mock_prolog:
                         swipl_out = build_mock_swipl_output(dataset_key, llm_candidate_norm)
                     else:
                         swipl_out = run_caring_call_swipl(
@@ -1183,12 +1219,16 @@ def self_guide_run(
                                             gate = "multi_solution_conflict"
                                     route_reason = f"Verifier kept LLM final: {gate}."
                                     prolog_pack["verifier_gate"] = gate
+                                    if gate == "multi_solution_conflict":
+                                        fallback_taken = True
+                                        fallback_reason = "multi_solution_conflict"
+                                        prolog_pack["fallback_taken"] = True
                             else:
                                 final_answer = llm_candidate_norm
                                 route_reason = "Verifier mode: LLM matches Prolog; keep LLM final."
                     else:
-                        route = "llm_only"
                         final_answer = llm_candidate_norm
+                        fallback_taken = True
 
                         error_hint = ""
                         if prolog_pack["error_code"]:
@@ -1202,7 +1242,9 @@ def self_guide_run(
                         route_reason = "Prolog failed, schema invalid, or no answer parsed."
                         if error_hint:
                             route_reason = f"{route_reason} {error_hint}"
+                        fallback_reason = "timeout" if inject_failure == "timeout" else "parse_fail"
                         prolog_pack["fallback_reason"] = route_reason
+                        prolog_pack["fallback_taken"] = True
 
                 except Exception as e:
                     prolog_pack["swipl"] = {
@@ -1213,12 +1255,14 @@ def self_guide_run(
                         "cmd": None,
                         "returncode": None,
                     }
-                    route = "llm_only"
                     final_answer = llm_candidate_norm
+                    fallback_taken = True
                     if sample_error_code == "OK":
                         sample_error_code = "SELF_GUIDE_SWIPL_EXCEPTION"
                     route_reason = f"Prolog parse/execute exception: {e}"
+                    fallback_reason = "parse_fail"
                     prolog_pack["fallback_reason"] = route_reason
+                    prolog_pack["fallback_taken"] = True
                     prolog_pack["clauses_count"] = None
             else:
                 if role_mode == "off":
@@ -1226,10 +1270,12 @@ def self_guide_run(
                 else:
                     route_reason = "Prolog disabled by task_type."
                 prolog_pack["fallback_reason"] = route_reason
+                prolog_pack["fallback_taken"] = False
                 prolog_pack["clauses_count"] = None
         else:
             route_reason = "Dataset not supported for Prolog."
             prolog_pack["fallback_reason"] = route_reason
+            prolog_pack["fallback_taken"] = False
             prolog_pack["clauses_count"] = None
 
         add_message("assistant", final_answer, history)
@@ -1309,6 +1355,7 @@ def self_guide_run(
                 "mock_llm": mock_llm,
                 "mock_prolog": mock_prolog,
                 "prolog_role": prolog_role,
+                "inject_failure": inject_failure,
                 "prolog_max_result": prolog_max_result,
                 "prolog_enabled": prolog_pack.get("enabled", False),
                 "prolog_task_type": prolog_pack.get("task_type"),
@@ -1350,6 +1397,8 @@ def self_guide_run(
             "round2_solve_prompt": solve_prompt,
             "log": history,
             "route": route,
+            "fallback_taken": fallback_taken,
+            "fallback_reason": fallback_reason,
             "prolog": prolog_pack,
             "route_reason": route_reason,
             "error_code": normalize_error_code(sample_error_code),
@@ -1381,6 +1430,7 @@ if __name__ == "__main__":
         parser.add_argument("--mock_prolog", action="store_true", help="mock Prolog execution (no SWI-Prolog call)")
         parser.add_argument("--prolog_role", choices=("off", "verifier", "executor"), default="off")
         parser.add_argument("--meta_interpreter", default=PROLOG_META_INTERPRETER)
+        parser.add_argument("--inject_failure", choices=("parse_fail", "timeout", "multi_solution"), default=None)
         parser.add_argument("--max_depth", type=int, default=PROLOG_MAX_DEPTH)
         parser.add_argument("--prolog_max_result", type=int, default=PROLOG_MAX_RESULT)
         parser.add_argument("--debug", action="store_true", help="enable debug logging and keep tmp files")
@@ -1400,6 +1450,7 @@ if __name__ == "__main__":
             mock_llm=args.mock_llm,
             mock_profile=args.mock_profile,
             mock_prolog=args.mock_prolog,
+            inject_failure=args.inject_failure,
             prolog_role=args.prolog_role,
             meta_interpreter=args.meta_interpreter,
             max_depth=args.max_depth,

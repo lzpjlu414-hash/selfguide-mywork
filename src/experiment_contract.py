@@ -82,6 +82,12 @@ def build_experiment_parser() -> ArgumentParser:
         help="mock Prolog execution and force-enable Prolog routing without SWI-Prolog",
     )
     parser.add_argument("--prolog_role", choices=("off", "verifier", "executor"), default=DEFAULTS["prolog_role"])
+    parser.add_argument(
+        "--inject_failure",
+        choices=("parse_fail", "timeout", "multi_solution"),
+        default=None,
+        help="inject deterministic failure mode in Prolog path for fallback-quality experiments",
+    )
 
     parser.add_argument("--force_task_type", choices=("Yes", "No", "Partial"), default=None)
     parser.add_argument("--meta_interpreter", default=DEFAULTS["meta_interpreter"])

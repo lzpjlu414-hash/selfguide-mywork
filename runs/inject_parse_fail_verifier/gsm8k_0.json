@@ -1,0 +1,127 @@
+{
+  "id": 0,
+  "dataset": "gsm8k",
+  "method": "cot_selfguide",
+  "models": {
+    "guide_model": "deepseek-chat",
+    "solve_model": "deepseek-chat"
+  },
+  "format_rule": "Output ONLY the final answer. Do NOT add explanation.",
+  "run_config": {
+    "dataset": "gsm8k",
+    "method": "cot_selfguide",
+    "start_index": 0,
+    "num_samples": 1,
+    "force_task_type": "Yes",
+    "solve_model": "deepseek-chat",
+    "guide_model": "deepseek-chat",
+    "solve_temperature": 0.2,
+    "guide_temperature": 0.7,
+    "max_retries": 3,
+    "guideline_schema_valid": true,
+    "guideline_retry_count": 0,
+    "prompt_contract_version": "p0.v1",
+    "prompt_versions": {
+      "round_a_draft": "round-a.v1",
+      "round_b_guideline": "round-b.v1",
+      "round_c_solve": "round-c.v1",
+      "round_c_prolog": "round-c-prolog.v1"
+    },
+    "prolog_contract_version": "p0.v1",
+    "swipl_schema_version": "1.0",
+    "mock_profile": null,
+    "mock_llm": true,
+    "mock_prolog": true,
+    "prolog_role": "verifier",
+    "inject_failure": "parse_fail",
+    "prolog_max_result": 20,
+    "prolog_enabled": true,
+    "prolog_task_type": "Yes",
+    "meta_interpreter": "iter_deep_with_proof",
+    "max_depth": 25,
+    "debug": false,
+    "keep_tmp": false,
+    "config_hash": "fa8230107c60"
+  },
+  "guideline": "task_type: Partial\nschema: |\n|\n  - Use lowercase constants for gsm8k entities.\n  - Keep predicate names consistent (snake_case).\n  - Represent Unknown with explicit 'unknown' atoms.\nquery_goal: |\n|\n  - Derive the final answer in the required output format.\n  - Ensure the query targets only one concrete result.\nfallback: |\n|\n  - If parsing fails, answer using the last known consistent step.\n  - If multiple answers, pick the most specific one.",
+  "guideline_schema_valid": true,
+  "guideline_retry_count": 0,
+  "gold": "Janet sells 16 - 3 - 4 = <<16-3-4=9>>9 duck eggs a day.\nShe makes 9 * 2 = $<<9*2=18>>18 every day at the farmer’s market.\n#### 18",
+  "draft_raw": "Reasoning: mock reasoning steps.\nFinal answer: #### 784",
+  "draft": "784",
+  "draft_answer": "784",
+  "pred_raw": "#### 196",
+  "pred": "196",
+  "llm_candidate": "196",
+  "llm_candidate_norm": "196",
+  "final_answer": "196",
+  "draft_final_same": false,
+  "final_modified_by_prolog": false,
+  "prolog_used": true,
+  "prolog_ok": false,
+  "solution_count": 0,
+  "proof_nonempty": false,
+  "prolog_inconclusive": false,
+  "multi_solution_conflict": false,
+  "prolog_error_code": "SELF_GUIDE_SWIPL_EXCEPTION",
+  "prolog_answer": null,
+  "draft_to_final_change_type": "revise",
+  "draft_correct": "False",
+  "final_correct": "False",
+  "prolog_overruled": false,
+  "draft_prolog_conflict": null,
+  "correctness": "False",
+  "round1_guideline_prompt": "You are a GuidelineGenerator.\nYou MUST NOT solve the question.\n\nOutput YAML with EXACT keys:\ntask_type: Yes/No/Partial  # whether to use Prolog\nschema: |                 # naming, predicates, negation/unknown conventions\nquery_goal: |             # what the Prolog query should prove/return\nfallback: |               # what to do on parse error/timeout/multiple answers\n\nRules:\n1) DO NOT output any final answer.\n2) schema MUST mention: constants naming convention, negation/Unknown handling, and at least one predicate signature example like score(student, points).\n3) query_goal MUST be specific (what to prove/return).\n4) solver output constraint: Output ONLY the final answer. Do NOT add explanation.\n\nJanet’s ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?\n\nYAML:",
+  "round2_solve_prompt": "Guideline/checklist:\ntask_type: Partial\nschema: |\n|\n  - Use lowercase constants for gsm8k entities.\n  - Keep predicate names consistent (snake_case).\n  - Represent Unknown with explicit 'unknown' atoms.\nquery_goal: |\n|\n  - Derive the final answer in the required output format.\n  - Ensure the query targets only one concrete result.\nfallback: |\n|\n  - If parsing fails, answer using the last known consistent step.\n  - If multiple answers, pick the most specific one.\n\nDraft answer (may be wrong):\nReasoning: mock reasoning steps.\nFinal answer: #### 784\n\nJanet’s ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?\n\nThink step by step internally, then give the final answer.\nThe draft may be entirely wrong; do NOT copy it.\nSolve the problem independently first, then use the guideline to check and revise.\nIMPORTANT: Do NOT output explanation.\nAfter solving, compare your solution with the Draft and identify any mistakes in the Draft internally.\nThen revise your final answer if needed.\nOutput ONLY the final answer. Do NOT add explanation.\nFinal answer:",
+  "log": [
+    {
+      "role": "user",
+      "content": "Guideline/checklist:\ntask_type: Partial\nschema: |\n|\n  - Use lowercase constants for gsm8k entities.\n  - Keep predicate names consistent (snake_case).\n  - Represent Unknown with explicit 'unknown' atoms.\nquery_goal: |\n|\n  - Derive the final answer in the required output format.\n  - Ensure the query targets only one concrete result.\nfallback: |\n|\n  - If parsing fails, answer using the last known consistent step.\n  - If multiple answers, pick the most specific one.\n\nDraft answer (may be wrong):\nReasoning: mock reasoning steps.\nFinal answer: #### 784\n\nJanet’s ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?\n\nThink step by step internally, then give the final answer.\nThe draft may be entirely wrong; do NOT copy it.\nSolve the problem independently first, then use the guideline to check and revise.\nIMPORTANT: Do NOT output explanation.\nAfter solving, compare your solution with the Draft and identify any mistakes in the Draft internally.\nThen revise your final answer if needed.\nOutput ONLY the final answer. Do NOT add explanation.\nFinal answer:"
+    },
+    {
+      "role": "assistant",
+      "content": "196"
+    }
+  ],
+  "route": "verifier",
+  "fallback_taken": true,
+  "fallback_reason": "parse_fail",
+  "prolog": {
+    "enabled": true,
+    "task_type": "Yes",
+    "prolog_max_result": 20,
+    "meta_interpreter": "iter_deep_with_proof",
+    "max_depth": 25,
+    "role_mode": "verifier",
+    "prolog_raw": "fact(ans9).\nanswer(X) :- fact(X).\nanswer(X).\n",
+    "swipl": {
+      "ok": false,
+      "error": "INJECTED_PARSE_FAIL",
+      "error_code": "SELF_GUIDE_SWIPL_EXCEPTION",
+      "raw": "",
+      "cmd": null,
+      "returncode": null
+    },
+    "fallback_reason": "Prolog parse/execute exception: INJECTED_PARSE_FAIL",
+    "fallback_taken": true,
+    "clauses_count": null
+  },
+  "route_reason": "Prolog parse/execute exception: INJECTED_PARSE_FAIL",
+  "error_code": "SELF_GUIDE_SWIPL_EXCEPTION",
+  "config_hash": "fa8230107c60",
+  "contracts": {
+    "prompt": {
+      "version": "p0.v1",
+      "round_versions": {
+        "round_a_draft": "round-a.v1",
+        "round_b_guideline": "round-b.v1",
+        "round_c_solve": "round-c.v1",
+        "round_c_prolog": "round-c-prolog.v1"
+      }
+    },
+    "prolog": {
+      "version": "p0.v1",
+      "schema_version": "1.0"
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -15,7 +16,7 @@ from src.abs.self_guide_myself import (
 )
 
 
-def _run_once(log_dir: Path, role: str) -> dict:
+def _run_once(log_dir: Path, role: str, inject_failure: Optional[str] = None) -> dict:
     self_guide_run(
         dataset="gsm8k",
         method="cot_selfguide",
@@ -27,6 +28,7 @@ def _run_once(log_dir: Path, role: str) -> dict:
         mock_profile="prolog-role-test",
         mock_prolog=True,
         prolog_role=role,
+        inject_failure=inject_failure,
     )
     log_file = next(log_dir.glob("gsm8k_*.json"))
     return json.loads(log_file.read_text(encoding="utf-8"))
@@ -171,4 +173,32 @@ def test_verifier_invalid_solution_count_keeps_llm_as_inconclusive(tmp_path: Pat
     assert payload["route"] == "verifier"
     assert payload["prolog"]["solution_count_valid"] is False
     assert payload["prolog"]["verifier_gate"] == "prolog_inconclusive"
+    assert payload["final_answer"] == payload["llm_candidate_norm"]
+
+def test_inject_parse_fail_keeps_role_and_marks_fallback(tmp_path: Path) -> None:
+    payload = _run_once(tmp_path / "parse_fail", "verifier", inject_failure="parse_fail")
+
+    assert payload["route"] == "verifier"
+    assert payload["fallback_taken"] is True
+    assert payload["fallback_reason"] == "parse_fail"
+    assert payload["final_answer"] == payload["llm_candidate_norm"]
+
+
+def test_inject_timeout_keeps_role_and_marks_fallback(tmp_path: Path) -> None:
+    payload = _run_once(tmp_path / "timeout", "executor", inject_failure="timeout")
+
+    assert payload["route"] == "executor"
+    assert payload["fallback_taken"] is True
+    assert payload["fallback_reason"] == "timeout"
+    assert payload["final_answer"] == payload["llm_candidate_norm"]
+
+
+def test_inject_multi_solution_conflict_marks_expected_metrics(tmp_path: Path) -> None:
+    payload = _run_once(tmp_path / "multi_solution", "verifier", inject_failure="multi_solution")
+
+    assert payload["route"] == "verifier"
+    assert payload["fallback_taken"] is True
+    assert payload["fallback_reason"] == "multi_solution_conflict"
+    assert payload["multi_solution_conflict"] is True
+    assert payload["prolog"]["verifier_gate"] == "multi_solution_conflict"
     assert payload["final_answer"] == payload["llm_candidate_norm"]
