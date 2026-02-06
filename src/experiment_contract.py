@@ -76,7 +76,11 @@ def build_experiment_parser() -> ArgumentParser:
 
     parser.add_argument("--mock_llm", action="store_true")
     parser.add_argument("--mock_profile", default=None)
-    parser.add_argument("--mock_prolog", action="store_true")
+    parser.add_argument(
+        "--mock_prolog",
+        action="store_true",
+        help="mock Prolog execution and force-enable Prolog routing without SWI-Prolog",
+    )
     parser.add_argument("--prolog_role", choices=("off", "verifier", "executor"), default=DEFAULTS["prolog_role"])
 
     parser.add_argument("--force_task_type", choices=("Yes", "No", "Partial"), default=None)
