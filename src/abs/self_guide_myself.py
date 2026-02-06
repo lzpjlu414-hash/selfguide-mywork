@@ -955,36 +955,32 @@ def self_guide_run(
                             route_reason = "Executor mode: final answer forced from Prolog."
                         else:
                             route = "verifier"
-                            if normalize_answer(llm_candidate_norm) != normalize_answer(prolog_answer_norm):
-                                final_answer = prolog_answer_norm
-                                llm_prolog_conflict = normalize_answer(llm_candidate_norm) != normalize_answer(
-                                    prolog_answer_norm)
-                                if llm_prolog_conflict:
-                                    answer_nonempty = is_nonempty_answer(prolog_answer_norm)
-                                    proof_nonempty = is_nonempty_proof(prolog_pack.get("proof"))
-                                    allow_override = bool(
-                                        prolog_ok
-                                        and answer_nonempty
-                                        and (proof_nonempty or solution_count == 1)
-                                    )
-                                    prolog_pack["answer_nonempty"] = answer_nonempty
-                                    prolog_pack["proof_nonempty"] = proof_nonempty
-                                    prolog_pack["verifier_allow_override"] = allow_override
-                                    if allow_override:
-                                        final_answer = prolog_answer_norm
-                                        route_reason = "Verifier override accepted by trust gate."
-                                        prolog_pack["verifier_gate"] = "override"
-                                    else:
-                                        gate = (
-                                            "multi_solution_conflict"
-                                            if (not proof_nonempty and isinstance(solution_count,
-                                                                                  int) and solution_count > 1)
-                                            else "prolog_inconclusive"
-                                        )
-                                        route_reason = f"Verifier kept LLM final: {gate}."
-                                        prolog_pack["verifier_gate"] = gate
+                            llm_prolog_conflict = normalize_answer(llm_candidate_norm) != normalize_answer(
+                                prolog_answer_norm)
+                            if llm_prolog_conflict:
+                                answer_nonempty = is_nonempty_answer(prolog_answer_norm)
+                                proof_nonempty = is_nonempty_proof(prolog_pack.get("proof"))
+                                gate_pass = bool(
+                                    prolog_ok
+                                    and answer_nonempty
+                                    and (proof_nonempty or solution_count == 1)
+                                )
+                                prolog_pack["answer_nonempty"] = answer_nonempty
+                                prolog_pack["proof_nonempty"] = proof_nonempty
+                                prolog_pack["verifier_allow_override"] = gate_pass
+                                if gate_pass:
+                                    final_answer = prolog_answer_norm
+                                    route_reason = "Verifier override accepted by trust gate."
+                                    prolog_pack["verifier_gate"] = "override"
                                 else:
-                                    route_reason = "Verifier mode: no conflict between LLM and Prolog answers."
+                                    gate = (
+                                        "multi_solution_conflict"
+                                        if (not proof_nonempty and isinstance(solution_count,
+                                                                              int) and solution_count > 1)
+                                        else "prolog_inconclusive"
+                                    )
+                                    route_reason = f"Verifier kept LLM final: {gate}."
+                                    prolog_pack["verifier_gate"] = gate
                             else:
                                 final_answer = llm_candidate_norm
                                 route_reason = "Verifier mode: LLM matches Prolog; keep LLM final."
