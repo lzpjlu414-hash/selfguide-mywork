@@ -14,7 +14,7 @@ from typing import Optional
 SCHEMA_VERSION = "1.0"
 
 
-def _build_schema_output(ok: bool, answer=None, proof=None, error_code=None, raw=None):
+def _build_schema_output(ok: bool, answer=None, proof=None, error_code=None, raw=None, solution_count=None):
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": bool(ok),
@@ -22,6 +22,7 @@ def _build_schema_output(ok: bool, answer=None, proof=None, error_code=None, raw
         "proof": proof,
         "error_code": error_code,
         "raw": raw,
+        "solution_count": solution_count,
     }
 
 
@@ -296,6 +297,7 @@ def main():
             answer=answer,
             proof=proof,
             error_code=error_code,
+            solution_count=len(results),
             raw={
                 "results_count": len(results),
                 "returncode": returncode,

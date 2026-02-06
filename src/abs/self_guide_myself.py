@@ -61,6 +61,20 @@ SWIPL_REQUIRED_KEYS = {
     "error_code",
 }
 
+ANSWER_PLACEHOLDERS = {"unknown", "none", "null", "n/a", "na"}
+
+
+def is_nonempty_answer(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    return text.lower() not in ANSWER_PLACEHOLDERS
+
+
+def is_nonempty_proof(value: Any) -> bool:
+    text = str(value or "").strip()
+    return bool(text and text != "NO_PROOF_RETURNED")
+
 
 def parse_caring_swipl_answer(raw: str) -> Dict[str, Any]:
     """严格按 schema_version 解析 CaRing call_swipl 的 out.json。"""
@@ -73,6 +87,7 @@ def parse_caring_swipl_answer(raw: str) -> Dict[str, Any]:
         "raw": raw or "",
         "legacy": False,
         "validation_error": None,
+        "solution_count": None,
     }
     body = (raw or "").strip()
     if not body:
@@ -135,6 +150,14 @@ def parse_caring_swipl_answer(raw: str) -> Dict[str, Any]:
     parsed["proof"] = proof
     parsed["error_code"] = error_code
     parsed["raw"] = obj.get("raw") if "raw" in obj else parsed["raw"]
+    solution_count = obj.get("solution_count")
+    if solution_count is not None:
+        if isinstance(solution_count, int) and solution_count >= 0:
+            parsed["solution_count"] = solution_count
+        else:
+            parsed["error_code"] = "SCHEMA_TYPE_MISMATCH"
+            parsed["validation_error"] = "solution_count must be non-negative int/null"
+            return parsed
     return parsed
 
 
@@ -901,6 +924,13 @@ def self_guide_run(
                     )
                     prolog_pack["proof"] = swipl_contract.get("proof")
                     prolog_pack["error_code"] = swipl_contract.get("error_code")
+                    raw_meta = swipl_contract.get("raw") if isinstance(swipl_contract.get("raw"), dict) else {}
+                    solution_count = swipl_contract.get("solution_count")
+                    if solution_count is None and isinstance(raw_meta, dict):
+                        raw_count = raw_meta.get("results_count")
+                        if isinstance(raw_count, int) and raw_count >= 0:
+                            solution_count = raw_count
+                    prolog_pack["solution_count"] = solution_count
                     prolog_pack["prolog_answer_raw"] = prolog_answer
                     prolog_pack["prolog_answer_norm"] = prolog_answer_norm
 
@@ -925,8 +955,39 @@ def self_guide_run(
                             route_reason = "Executor mode: final answer forced from Prolog."
                         else:
                             route = "verifier"
-                            final_answer = llm_candidate_norm
-                            route_reason = "Verifier mode: keep LLM final; Prolog used for verification only."
+                            if normalize_answer(llm_candidate_norm) != normalize_answer(prolog_answer_norm):
+                                final_answer = prolog_answer_norm
+                                llm_prolog_conflict = normalize_answer(llm_candidate_norm) != normalize_answer(
+                                    prolog_answer_norm)
+                                if llm_prolog_conflict:
+                                    answer_nonempty = is_nonempty_answer(prolog_answer_norm)
+                                    proof_nonempty = is_nonempty_proof(prolog_pack.get("proof"))
+                                    allow_override = bool(
+                                        prolog_ok
+                                        and answer_nonempty
+                                        and (proof_nonempty or solution_count == 1)
+                                    )
+                                    prolog_pack["answer_nonempty"] = answer_nonempty
+                                    prolog_pack["proof_nonempty"] = proof_nonempty
+                                    prolog_pack["verifier_allow_override"] = allow_override
+                                    if allow_override:
+                                        final_answer = prolog_answer_norm
+                                        route_reason = "Verifier override accepted by trust gate."
+                                        prolog_pack["verifier_gate"] = "override"
+                                    else:
+                                        gate = (
+                                            "multi_solution_conflict"
+                                            if (not proof_nonempty and isinstance(solution_count,
+                                                                                  int) and solution_count > 1)
+                                            else "prolog_inconclusive"
+                                        )
+                                        route_reason = f"Verifier kept LLM final: {gate}."
+                                        prolog_pack["verifier_gate"] = gate
+                                else:
+                                    route_reason = "Verifier mode: no conflict between LLM and Prolog answers."
+                            else:
+                                final_answer = llm_candidate_norm
+                                route_reason = "Verifier mode: LLM matches Prolog; keep LLM final."
                     else:
                         route = "llm_only"
                         final_answer = llm_candidate_norm
@@ -986,9 +1047,11 @@ def self_guide_run(
         prolog_ok = bool(prolog_pack.get("swipl_contract", {}).get("ok")) if isinstance(
             prolog_pack.get("swipl_contract"), dict) else False
         prolog_used = bool(route in ("verifier", "executor"))
-        prolog_overruled = bool(route == "executor" and prolog_answer is not None and normalize_answer(
+        prolog_overruled = bool(route in ("verifier", "executor") and prolog_answer is not None and normalize_answer(
             llm_candidate_norm) != normalize_answer(prolog_answer))
-        final_modified_by_prolog = bool(route == "executor" and prolog_answer is not None)
+        final_modified_by_prolog = bool(
+            route in ("verifier", "executor") and prolog_answer is not None and normalize_answer(
+                final_answer) == normalize_answer(prolog_answer))
         draft_to_final_change_type = compute_change_type(
             draft=draft,
             final=final_answer,
