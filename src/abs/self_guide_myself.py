@@ -1160,6 +1160,12 @@ def self_guide_run(
             prolog_used=prolog_used,
             prolog_overruled=prolog_overruled,
         )
+        solution_count = prolog_pack.get("solution_count") if isinstance(prolog_pack, dict) else None
+        proof_nonempty = is_nonempty_proof(prolog_pack.get("proof")) if isinstance(prolog_pack, dict) else False
+        verifier_gate = str(prolog_pack.get("verifier_gate") or "") if isinstance(prolog_pack, dict) else ""
+        prolog_inconclusive = verifier_gate == "prolog_inconclusive"
+        multi_solution_conflict = verifier_gate == "multi_solution_conflict"
+        prolog_error_code = prolog_pack.get("error_code") if isinstance(prolog_pack, dict) else None
 
         draft_prolog_conflict = None
         if prolog_answer is not None:
@@ -1222,6 +1228,11 @@ def self_guide_run(
             "final_modified_by_prolog": final_modified_by_prolog,
             "prolog_used": prolog_used,
             "prolog_ok": prolog_ok,
+            "solution_count": solution_count,
+            "proof_nonempty": proof_nonempty,
+            "prolog_inconclusive": prolog_inconclusive,
+            "multi_solution_conflict": multi_solution_conflict,
+            "prolog_error_code": prolog_error_code,
             "prolog_answer": prolog_answer,
             "draft_to_final_change_type": draft_to_final_change_type,
             "draft_correct": draft_correct,
