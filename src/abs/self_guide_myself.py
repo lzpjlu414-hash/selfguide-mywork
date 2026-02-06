@@ -6,12 +6,15 @@ import re
 import sys
 import uuid
 from glob import glob
-from typing import Optional, Tuple, List, Any, Dict
-
-
+from typing import Optional, Tuple, List, Any, Dict, Union
 
 from pathlib import Path
 import subprocess
+
+try:
+    import yaml
+except Exception:  # pragma: no cover - optional dependency
+    yaml = None
 
 try:
     from src.llm_client import chat_complete, resolve_model
@@ -374,14 +377,81 @@ def _render_guideline_block(guideline_obj: Dict[str, str]) -> str:
 
 
 
-def parse_task_type_from_guideline(guideline: str) -> str:
+def parse_task_type_with_confidence(guideline: Union[dict, str]) -> Tuple[str, float]:
     """
-    Expect guideline contains a line like:
-      task_type: Yes/No/Partial
-    fallback: if not found -> "No"
+    Parse guideline task_type and return a confidence in [0, 1].
+
+    Scoring weights:
+      - required_keys_completeness: 0.25 (task_type/schema/query_goal/fallback all non-empty)
+      - symbolization_schema_completeness: 0.20
+      - query_goal_feasibility: 0.20
+      - fallback_policy_completeness: 0.20
+      - yaml_parseable: 0.15
     """
-    m = re.search(r"(?im)^\s*task_type\s*:\s*(yes|no|partial)\s*$", guideline or "")
-    return (m.group(1).capitalize() if m else "No")
+    if isinstance(guideline, dict):
+        obj: Dict[str, Any] = guideline
+        raw_text = _render_guideline_block({k: str(v or "") for k, v in obj.items()})
+    else:
+        raw_text = str(guideline or "")
+        obj = {}
+
+    yaml_parseable = False
+    parsed_yaml: Dict[str, Any] = {}
+    if isinstance(guideline, dict):
+        yaml_parseable = True
+        parsed_yaml = guideline
+    elif yaml is not None:
+        try:
+            candidate = yaml.safe_load(raw_text)
+            if isinstance(candidate, dict):
+                parsed_yaml = candidate
+                yaml_parseable = True
+        except Exception:
+            yaml_parseable = False
+
+    if not parsed_yaml:
+        parsed_yaml = _parse_structured_guideline(raw_text)
+        if parsed_yaml:
+            yaml_parseable = True
+
+    canonical: Dict[str, str] = {}
+    for key in GUIDELINE_REQUIRED_KEYS:
+        canonical[key] = str(parsed_yaml.get(key, "") if isinstance(parsed_yaml, dict) else "").strip()
+
+    task_type = "No"
+    task_match = re.search(r"(?im)^\s*task_type\s*:\s*(yes|no|partial)\s*$", raw_text)
+    if canonical.get("task_type", "").lower() in ("yes", "no", "partial"):
+        task_type = canonical["task_type"].capitalize()
+    elif task_match:
+        task_type = task_match.group(1).capitalize()
+
+    non_empty_required = sum(1 for key in GUIDELINE_REQUIRED_KEYS if canonical.get(key, ""))
+    required_keys_score = non_empty_required / float(len(GUIDELINE_REQUIRED_KEYS))
+
+    schema_text = canonical.get("schema", "")
+    symbolization_schema_score = 1.0 if _schema_section_complete(schema_text) else 0.0
+
+    query_goal_text = canonical.get("query_goal", "")
+    query_has_query = bool(re.search(r"\bquery\b", query_goal_text, flags=re.IGNORECASE))
+    query_has_predicate_form = bool(re.search(r"\b[a-z_][a-z0-9_]*\s*\([^)]+\)", query_goal_text))
+    query_goal_feasibility_score = 1.0 if (query_has_query or query_has_predicate_form) and len(
+        query_goal_text) >= 8 else 0.0
+
+    fallback_text = canonical.get("fallback", "")
+    fallback_has_policy = bool(re.search(r"\b(fallback|if|when|otherwise|timeout|parse|unknown)\b", fallback_text,
+                                         flags=re.IGNORECASE))
+    fallback_policy_score = 1.0 if fallback_has_policy and len(fallback_text) >= 8 else 0.0
+
+    yaml_parse_score = 1.0 if yaml_parseable else 0.0
+    confidence = (
+            0.25 * required_keys_score
+            + 0.20 * symbolization_schema_score
+            + 0.20 * query_goal_feasibility_score
+            + 0.20 * fallback_policy_score
+            + 0.15 * yaml_parse_score
+    )
+    confidence = max(0.0, min(1.0, round(confidence, 4)))
+    return task_type, confidence
 
 def build_prolog_gen_prompt(qblock: str, guideline: str) -> str:
     """
@@ -1101,6 +1171,10 @@ def self_guide_run(
             "proof_nonempty": False,
             "proof_shape_ok": False,
             "verifier_allow_override": False,
+            "task_confidence": 0.0,
+            "task_type_raw": "No",
+            "confidence_gate_reason": "Dataset unsupported or confidence gate not applied.",
+            "role_mode_effective": role_mode,
         }
         llm_candidate = pred
         llm_candidate_norm = postprocess_pred(dataset_key, llm_candidate)
@@ -1110,17 +1184,36 @@ def self_guide_run(
         fallback_reason = None
 
         if dataset_key in ("gsm8k", "prontoqa", "proofwriter"):
-            task_type = parse_task_type_from_guideline(guideline)
+            parsed_task_type, task_confidence = parse_task_type_with_confidence(guideline)
+            task_type = parsed_task_type
 
             if force_task_type:
                 task_type = force_task_type
 
-            prolog_pack["task_type"] = task_type
-            mode_allows_prolog = role_mode in ("verifier", "executor")
-            prolog_pack["enabled"] = mode_allows_prolog and (task_type in ("Yes", "Partial"))
+            confidence_gate_task_type = task_type
+            confidence_route_mode = role_mode
+            confidence_gate_reason = "Guideline confidence passed full routing threshold."
+            if task_confidence < 0.4:
+                confidence_gate_task_type = "No"
+                confidence_route_mode = "off"
+                confidence_gate_reason = (
+                    "Guideline confidence < 0.4; disable Prolog and default to No to avoid low-trust execution."
+                )
+            elif task_confidence < 0.7:
+                confidence_gate_task_type = "Partial"
+                confidence_route_mode = "verifier"
+                confidence_gate_reason = "Guideline confidence in [0.4,0.7); allow verifier-only mode."
+
+            prolog_pack["task_type"] = confidence_gate_task_type
+            prolog_pack["task_type_raw"] = task_type
+            prolog_pack["task_confidence"] = task_confidence
+            prolog_pack["confidence_gate_reason"] = confidence_gate_reason
+            prolog_pack["role_mode_effective"] = confidence_route_mode
+            mode_allows_prolog = confidence_route_mode in ("verifier", "executor")
+            prolog_pack["enabled"] = mode_allows_prolog and (confidence_gate_task_type in ("Yes", "Partial"))
 
             if prolog_pack["enabled"]:
-                route = role_mode
+                route = confidence_route_mode
                 prolog_prompt = build_prolog_gen_prompt(qblock, guideline)
                 prolog_history = [{"role": "user", "content": prolog_prompt}]
                 prolog_raw = ai_request(
@@ -1311,10 +1404,10 @@ def self_guide_run(
                     prolog_pack["fallback_taken"] = True
                     prolog_pack["clauses_count"] = None
             else:
-                if role_mode == "off":
-                    route_reason = "Prolog role is off."
+                if confidence_route_mode == "off":
+                    route_reason = f"Prolog role is off. {prolog_pack.get('confidence_gate_reason', '')}"
                 else:
-                    route_reason = "Prolog disabled by task_type."
+                    route_reason = f"Prolog disabled by task_type/confidence gate. {prolog_pack.get('confidence_gate_reason', '')}"
                 prolog_pack["fallback_reason"] = route_reason
                 prolog_pack["fallback_taken"] = False
                 prolog_pack["clauses_count"] = None
@@ -1408,6 +1501,10 @@ def self_guide_run(
                 "prolog_max_result": prolog_max_result,
                 "prolog_enabled": prolog_pack.get("enabled", False),
                 "prolog_task_type": prolog_pack.get("task_type"),
+                "task_type_raw": prolog_pack.get("task_type_raw"),
+                "task_confidence": prolog_pack.get("task_confidence", 0.0),
+                "confidence_gate_reason": prolog_pack.get("confidence_gate_reason"),
+                "role_mode_effective": prolog_pack.get("role_mode_effective", role_mode),
                 "meta_interpreter": meta_interpreter,
                 "max_depth": max_depth,
                 "debug": debug,
@@ -1447,6 +1544,10 @@ def self_guide_run(
             "round2_solve_prompt": solve_prompt,
             "log": history,
             "route": route,
+            "task_confidence": prolog_pack.get("task_confidence", 0.0),
+            "task_type_raw": prolog_pack.get("task_type_raw"),
+            "confidence_gate_reason": prolog_pack.get("confidence_gate_reason"),
+            "role_mode_effective": prolog_pack.get("role_mode_effective", role_mode),
             "fallback_taken": fallback_taken,
             "fallback_reason": fallback_reason,
             "prolog": prolog_pack,
