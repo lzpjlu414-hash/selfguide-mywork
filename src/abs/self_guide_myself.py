@@ -340,14 +340,19 @@ def _parse_structured_guideline(raw: str) -> Dict[str, str]:
         obj = None
 
     if isinstance(obj, dict):
-        return {k: str(obj.get(k, "")).strip() for k in GUIDELINE_REQUIRED_KEYS}
+        rparsed = {k: str(obj.get(k, "")).strip() for k in GUIDELINE_REQUIRED_KEYS}
+        if not rparsed.get("prolog_mode", "").strip():
+            rparsed["prolog_mode"] = "executor"
+        return rparsed
 
     pattern = re.compile(
-        r"(?ims)^\s*(task_type|schema|query_goal|fallback)\s*:\s*(.*?)\s*(?=^\s*(?:task_type|schema|query_goal|fallback)\s*:|\Z)"
+        r"(?ims)^\s*(task_type|schema|query_goal|fallback|prolog_mode)\s*:\s*(.*?)\s*(?=^\s*(?:task_type|schema|query_goal|fallback|prolog_mode)\s*:|\Z)"
     )
     parsed: Dict[str, str] = {}
     for key, val in pattern.findall(text):
         parsed[key.lower()] = str(val or "").strip()
+    if not parsed.get("prolog_mode", "").strip():
+        parsed["prolog_mode"] = "executor"
     return parsed
 
 
@@ -362,6 +367,9 @@ def _schema_section_complete(schema_text: str) -> bool:
 def _validate_structured_guideline(raw: str) -> Tuple[bool, Dict[str, str], List[str]]:
     parsed = _parse_structured_guideline(raw)
     missing = [k for k in GUIDELINE_REQUIRED_KEYS if not parsed.get(k, "").strip()]
+    prolog_mode = parsed.get("prolog_mode", "").strip().lower()
+    if prolog_mode and prolog_mode not in {"off", "verifier", "executor"}:
+        missing.append("prolog_mode")
     if not missing and not _schema_section_complete(parsed.get("schema", "")):
         missing.append("schema")
     return (len(missing) == 0), parsed, missing
@@ -370,6 +378,7 @@ def _validate_structured_guideline(raw: str) -> Tuple[bool, Dict[str, str], List
 def _render_guideline_block(guideline_obj: Dict[str, str]) -> str:
     return (
         f"task_type: {guideline_obj.get('task_type', '')}\n"
+        f"prolog_mode: {guideline_obj.get('prolog_mode', '')}\n"
         f"schema: |\n{guideline_obj.get('schema', '')}\n"
         f"query_goal: |\n{guideline_obj.get('query_goal', '')}\n"
         f"fallback: |\n{guideline_obj.get('fallback', '')}"
@@ -452,6 +461,43 @@ def parse_task_type_with_confidence(guideline: Union[dict, str]) -> Tuple[str, f
     )
     confidence = max(0.0, min(1.0, round(confidence, 4)))
     return task_type, confidence
+
+def parse_guideline_prolog_mode(guideline: Union[dict, str]) -> Tuple[Optional[str], bool]:
+    """
+    Parse optional `prolog_mode` from guideline.
+
+    Returns:
+      - prolog_mode_raw: one of off/verifier/executor when present and valid, otherwise None
+      - prolog_mode_defaulted: True when guideline does not provide a valid prolog_mode
+    """
+    raw_text = ""
+    parsed_yaml: Dict[str, Any] = {}
+
+    if isinstance(guideline, dict):
+        parsed_yaml = guideline
+        raw_text = _render_guideline_block({k: str(v or "") for k, v in guideline.items()})
+    else:
+        raw_text = str(guideline or "")
+        if yaml is not None:
+            try:
+                candidate = yaml.safe_load(raw_text)
+                if isinstance(candidate, dict):
+                    parsed_yaml = candidate
+            except Exception:
+                parsed_yaml = {}
+
+    if not parsed_yaml:
+        parsed_yaml = _parse_structured_guideline(raw_text)
+
+    prolog_mode_raw = str(parsed_yaml.get("prolog_mode", "")).strip().lower() if isinstance(parsed_yaml, dict) else ""
+    if not prolog_mode_raw:
+        match = re.search(r"(?im)^\s*prolog_mode\s*:\s*(off|verifier|executor)\s*$", raw_text)
+        if match:
+            prolog_mode_raw = match.group(1).strip().lower()
+
+    if prolog_mode_raw in ("off", "verifier", "executor"):
+        return prolog_mode_raw, False
+    return None, True
 
 def build_prolog_gen_prompt(qblock: str, guideline: str) -> str:
     """
@@ -670,7 +716,8 @@ PROLOG_MAX_DEPTH = 25
 SOLVE_TEMPERATURE = 0.2
 GUIDE_TEMPERATURE = 0.7
 MAX_RETRIES = 3
-GUIDELINE_REQUIRED_KEYS = ("task_type", "schema", "query_goal", "fallback")
+GUIDELINE_REQUIRED_KEYS = ("task_type", "schema", "query_goal", "fallback", "prolog_mode")
+GUIDELINE_OPTIONAL_KEYS = ("prolog_mode",)
 
 def postprocess_pred(dataset_key: str, pred: str) -> str:
     pred = (pred or "").strip()
@@ -826,8 +873,9 @@ def build_question_block(dataset_key: str, data: dict) -> Tuple[str, str]:
 #     )
 def build_guideline_prompt(dataset_key: str, qblock: str, format_rule: str) -> str:
     """
-    Output MUST be YAML with 4 sections:
+    Output MUST be YAML with 5 sections:
       task_type: Yes/No/Partial
+      prolog_mode: off|verifier|executor
       schema: ...
       query_goal: ...
       fallback: ...
@@ -837,6 +885,7 @@ def build_guideline_prompt(dataset_key: str, qblock: str, format_rule: str) -> s
         "You MUST NOT solve the question.\n\n"
         "Output YAML with EXACT keys:\n"
         "task_type: Yes/No/Partial  # whether to use Prolog\n"
+        "prolog_mode: off|verifier|executor  # how to use Prolog\n"
         "schema: |                 # naming, predicates, negation/unknown conventions\n"
         "query_goal: |             # what the Prolog query should prove/return\n"
         "fallback: |               # what to do on parse error/timeout/multiple answers\n\n"
@@ -1178,6 +1227,9 @@ def self_guide_run(
             "task_type_source": "parsed",
             "confidence_gate_reason": "Dataset unsupported or confidence gate not applied.",
             "role_mode_effective": role_mode,
+            "prolog_mode_raw": None,
+            "prolog_mode_effective": role_mode,
+            "prolog_mode_defaulted": True,
         }
         llm_candidate = pred
         llm_candidate_norm = postprocess_pred(dataset_key, llm_candidate)
@@ -1188,13 +1240,16 @@ def self_guide_run(
 
         if dataset_key in ("gsm8k", "prontoqa", "proofwriter"):
             parsed_task_type, task_confidence = parse_task_type_with_confidence(guideline)
+            guideline_mode_raw, guideline_mode_defaulted = parse_guideline_prolog_mode(guideline)
+            guideline_mode_effective = guideline_mode_raw if guideline_mode_raw else role_mode
+
             task_type_raw = parsed_task_type
             task_type_forced = force_task_type if force_task_type else None
             task_type_for_gate = task_type_forced if task_type_forced else task_type_raw
             task_type_source = "forced" if task_type_forced else "parsed"
 
             confidence_gate_task_type = task_type_for_gate
-            confidence_route_mode = role_mode
+            confidence_route_mode = guideline_mode_effective
             confidence_gate_reason = "Guideline confidence passed full routing threshold."
             if task_confidence <= 0.4:
                 confidence_gate_task_type = "No"
@@ -1215,6 +1270,9 @@ def self_guide_run(
             prolog_pack["task_confidence"] = task_confidence
             prolog_pack["confidence_gate_reason"] = confidence_gate_reason
             prolog_pack["role_mode_effective"] = confidence_route_mode
+            prolog_pack["prolog_mode_raw"] = guideline_mode_raw
+            prolog_pack["prolog_mode_defaulted"] = guideline_mode_defaulted
+            prolog_pack["prolog_mode_effective"] = confidence_route_mode
             mode_allows_prolog = confidence_route_mode in ("verifier", "executor")
             prolog_pack["enabled"] = mode_allows_prolog and (confidence_gate_task_type in ("Yes", "Partial"))
 
@@ -1515,6 +1573,10 @@ def self_guide_run(
                 "task_confidence": prolog_pack.get("task_confidence", 0.0),
                 "confidence_gate_reason": prolog_pack.get("confidence_gate_reason"),
                 "role_mode_effective": prolog_pack.get("role_mode_effective", role_mode),
+                "prolog_mode_raw": prolog_pack.get("prolog_mode_raw"),
+                "prolog_mode_effective": prolog_pack.get("prolog_mode_effective",
+                                                         prolog_pack.get("role_mode_effective", role_mode)),
+                "prolog_mode_defaulted": bool(prolog_pack.get("prolog_mode_defaulted", True)),
                 "meta_interpreter": meta_interpreter,
                 "max_depth": max_depth,
                 "debug": debug,
@@ -1561,6 +1623,10 @@ def self_guide_run(
             "task_type_source": prolog_pack.get("task_type_source"),
             "confidence_gate_reason": prolog_pack.get("confidence_gate_reason"),
             "role_mode_effective": prolog_pack.get("role_mode_effective", role_mode),
+            "prolog_mode_raw": prolog_pack.get("prolog_mode_raw"),
+            "prolog_mode_effective": prolog_pack.get("prolog_mode_effective",
+                                                     prolog_pack.get("role_mode_effective", role_mode)),
+            "prolog_mode_defaulted": bool(prolog_pack.get("prolog_mode_defaulted", True)),
             "fallback_taken": fallback_taken,
             "fallback_reason": fallback_reason,
             "prolog": prolog_pack,
